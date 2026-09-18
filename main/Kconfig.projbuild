@@ -1,0 +1,39 @@
+menu "RotorREC serial bridge"
+
+config BF_CAM_LCD
+    bool
+    default y if IDF_TARGET_ESP32C6
+    default n
+
+config BF_CAM_UART_ENABLED
+    bool "Enable Betaflight MSP UART bridge"
+    default y
+    help
+        Uses UART1, independent of USB logging. Never writes flight-control settings.
+
+config BF_CAM_UART_TX_GPIO
+    int "ESP32 UART TX GPIO (connect to FC RX)"
+    range 0 23
+    default 0 if IDF_TARGET_ESP32C3
+    default 18
+
+config BF_CAM_UART_RX_GPIO
+    int "ESP32 UART RX GPIO (connect to FC TX)"
+    range 0 23
+    default 1 if IDF_TARGET_ESP32C3
+    default 19
+
+config BF_CAM_UART_BAUD
+    int "MSP baud rate (must match FC port)"
+    range 9600 460800
+    default 115200
+
+config BF_CAM_USER_MODE_ID
+    int "Recording USER mode permanent ID (USER1=40 through USER4=43)"
+    range 40 43
+    default 40
+    help
+        Assign any AUX channel/range to this mode in Betaflight, not in ESP32 firmware.
+        The mode must appear in MSP_BOXIDS. No fallback to ARM or a raw channel.
+
+endmenu

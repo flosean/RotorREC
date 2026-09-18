@@ -1,0 +1,28 @@
+# ESP-IDF generated files
+build*/
+managed_components/
+sdkconfig
+sdkconfig.old
+# Local environment and historical development material
+.local/
+archive/
+captures/
+hardware/
+docs/research/
+docs/reference/
+docs/vendor/
+# Captures, binaries, logs and editor state
+*.pcap
+*.pcapng
+*.bin
+*.elf
+*.map
+*.log
+*.pyc
+__pycache__/
+.vscode/
+.idea/
+.env
+.env.*
+.DS_Store
+Thumbs.db
