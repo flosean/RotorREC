@@ -31,7 +31,7 @@
 static const char *TAG = "LOGIC_STATUS";
 
 // Global variables to store various camera status information
-// 全局变量，保存相机的各种状态信息
+// Global camera state
 uint8_t current_camera_mode = 0;
 uint8_t current_camera_status = 0;
 uint8_t current_video_resolution = 0;
@@ -44,7 +44,7 @@ uint16_t current_timelapse_interval = 0;
 bool camera_status_initialized = false;
 
 // Global variables for new camera status push command frame
-// 新相机状态推送命令帧的全局变量
+// Global state for the newer camera status notification frame
 uint8_t current_type_mode_name = 0;
 uint8_t current_mode_name_length = 0;
 uint8_t current_mode_name[20] = {0};
@@ -55,13 +55,13 @@ uint8_t current_mode_param[20] = {0};
 
 /**
  * @brief Check if camera is recording
- *        检查相机是否正在录制
+ *        Check whether the camera is recording
  * 
  * Check if camera is in recording or pre-recording state, and status is initialized.
- * 判断相机是否处于录制状态或预录制状态，并且状态已初始化。
+ * Check for initialized state and recording or pre-recording status
  * 
  * @return bool Returns true if camera is recording, false otherwise
- *              如果相机正在录制，则返回 true，否则返回 false
+ *              Return true if recording; otherwise return false
  */
 bool is_camera_recording() {
     if ((current_camera_status == CAMERA_STATUS_PHOTO_OR_RECORDING || current_camera_status == CAMERA_STATUS_PRE_RECORDING) && camera_status_initialized) {
@@ -72,10 +72,10 @@ bool is_camera_recording() {
 
 /**
  * @brief Print current camera status (partial status, other status can be printed as needed)
- *        打印当前相机状态（部分状态，后续可自行打印其它状态）
+ *        Print selected camera state fields; additional fields may be added
  * 
  * Print camera mode, status, resolution, frame rate and electronic image stabilization mode.
- * 打印相机的模式、状态、分辨率、帧率和电子防抖模式等信息。
+ * Print camera mode, status, resolution, frame rate, and EIS mode
  */
 void print_camera_status() {
     if (!camera_status_initialized) {
@@ -104,14 +104,14 @@ void print_camera_status() {
 
 /**
  * @brief Subscribe to camera status
- *        订阅相机状态
+ *        Subscribe to camera status
  * 
  * @param push_mode Subscription mode
- *                  订阅模式
+ *                  Subscription mode
  * @param push_freq Subscription frequency
- *                  订阅频率
+ *                  Subscription frequency
  * @return int Returns 0 on success, -1 on failure
- *             返回 0 表示成功，-1 表示失败
+ *             Return 0 on success, or -1 on failure
  */
 int subscript_camera_status(uint8_t push_mode, uint8_t push_freq) {
     ESP_LOGI(TAG, "Subscribing to Camera Status with push_mode: %d, push_freq: %d", push_mode, push_freq);
@@ -136,13 +136,13 @@ int subscript_camera_status(uint8_t push_mode, uint8_t push_freq) {
 
 /**
  * @brief Update camera state machine (callback function)
- *        更新相机状态机（回调函数）
+ *        Camera state update callback
  * 
  * Process and update various camera states, check for state changes and print updated information.
- * 处理并更新相机的各项状态，检查状态是否发生变化并打印更新后的信息。
+ * Update camera state, detect changes, and log the updated values
  * 
  * @param data Input camera status data
- *             传入的相机状态数据
+ *             Incoming camera status data
  */
 void update_camera_state_handler(void *data) {
     if (!data) {
@@ -155,7 +155,7 @@ void update_camera_state_handler(void *data) {
     bool state_changed = false;
 
     // Check and update camera mode
-    // 检查并更新相机模式
+    // Check and update camera mode
     if (current_camera_mode != parsed_data->camera_mode) {
         current_camera_mode = parsed_data->camera_mode;
         ESP_LOGI(TAG, "Camera mode updated to: %d", current_camera_mode);
@@ -163,7 +163,7 @@ void update_camera_state_handler(void *data) {
     }
 
     // Check and update camera status
-    // 检查并更新相机状态
+    // Check and update camera status
     if (current_camera_status != parsed_data->camera_status) {
         current_camera_status = parsed_data->camera_status;
         ESP_LOGI(TAG, "Camera status updated to: %d", current_camera_status);
@@ -171,7 +171,7 @@ void update_camera_state_handler(void *data) {
     }
 
     // Check and update video resolution
-    // 检查并更新视频分辨率
+    // Check and update video resolution
     if (current_video_resolution != parsed_data->video_resolution) {
         current_video_resolution = parsed_data->video_resolution;
         ESP_LOGI(TAG, "Video resolution updated to: %d", current_video_resolution);
@@ -179,7 +179,7 @@ void update_camera_state_handler(void *data) {
     }
 
     // Check and update frame rate
-    // 检查并更新帧率
+    // Check and update frame rate
     if (current_fps_idx != parsed_data->fps_idx) {
         current_fps_idx = parsed_data->fps_idx;
         ESP_LOGI(TAG, "FPS index updated to: %d", current_fps_idx);
@@ -187,7 +187,7 @@ void update_camera_state_handler(void *data) {
     }
 
     // Check and update electronic image stabilization mode
-    // 检查并更新电子防抖模式
+    // Check and update EIS mode
     if (current_eis_mode != parsed_data->eis_mode) {
         current_eis_mode = parsed_data->eis_mode;
         ESP_LOGI(TAG, "EIS mode updated to: %d", current_eis_mode);
@@ -195,7 +195,7 @@ void update_camera_state_handler(void *data) {
     }
 
     // Check and update user mode
-    // 检查并更新用户模式
+    // Check and update user mode
     if (current_user_mode != parsed_data->user_mode) {
         current_user_mode = parsed_data->user_mode;
         ESP_LOGI(TAG, "User mode updated to: %d", current_user_mode);
@@ -203,7 +203,7 @@ void update_camera_state_handler(void *data) {
     }
 
     // Check and update camera mode next flag
-    // 检查并更新相机模式下一个标志
+    // Check and update the next camera mode flag
     if (current_camera_mode_next_flag != parsed_data->camera_mode_next_flag) {
         current_camera_mode_next_flag = parsed_data->camera_mode_next_flag;
         ESP_LOGI(TAG, "Camera mode next flag updated to: %d", current_camera_mode_next_flag);
@@ -211,7 +211,7 @@ void update_camera_state_handler(void *data) {
     }
 
     // Check and update record time
-    // 检查并更新录制时间
+    // Check and update recording time
     if (current_record_time != parsed_data->record_time) {
         current_record_time = parsed_data->record_time;
         ESP_LOGI(TAG, "Record time updated to: %d", current_record_time);
@@ -219,7 +219,7 @@ void update_camera_state_handler(void *data) {
     }
 
     // Check and update timelapse interval
-    // 检查并更新延时摄影间隔
+    // Check and update the timelapse interval
     if (current_timelapse_interval != parsed_data->timelapse_interval) {
         current_timelapse_interval = parsed_data->timelapse_interval;
         ESP_LOGI(TAG, "Timelapse interval updated to: %d", current_timelapse_interval);
@@ -227,16 +227,16 @@ void update_camera_state_handler(void *data) {
     }
 
     // If status not initialized, mark as initialized
-    // 如果状态尚未初始化，标记为已初始化
+    // Mark the state as initialized if this is the first update
     if (!camera_status_initialized) {
         camera_status_initialized = true;
         ESP_LOGI(TAG, "Camera state fully updated and marked as initialized.");
         state_changed = true;  // Force status print as this is initialization
-                               // 强制打印状态，因为这是初始化
+                               // Force a status log during initialization
     }
 
     // If state changed or first initialization, print current camera status
-    // 如果状态变更或第一次初始化，打印当前相机状态
+    // Print status when state changes or is initialized for the first time
     if (state_changed) {
         print_camera_status();
     }
@@ -255,41 +255,41 @@ void update_new_camera_state_handler(void *data) {
     ESP_LOGI(TAG, "[1D06] ========== New Camera Status Push =========");
 
     // Update type_mode_name
-    // 更新相机模式名字类型
+    // Update the camera mode name type
     current_type_mode_name = parsed_data->type_mode_name;
     ESP_LOGI(TAG, "[1D06] Camera mode name type: 0x%02X", current_type_mode_name);
     
     // Update mode_name_length
-    // 更新模式名字长度
+    // Update the mode name length
     current_mode_name_length = parsed_data->mode_name_length;
     ESP_LOGI(TAG, "[1D06] Mode name length: %d", current_mode_name_length);
     
     // Update mode_name array
-    // 更新模式名字数组
+    // Update the mode name buffer
     memcpy(current_mode_name, parsed_data->mode_name, 20);
 
     // Ensure null termination for safe string printing
-    // 确保字符串 null 终止以便安全打印
+    // Ensure null termination for safe logging
     char mode_name_str[21] = {0};
     memcpy(mode_name_str, parsed_data->mode_name, 20);
     ESP_LOGI(TAG, "[1D06] Mode name: %s", mode_name_str);
     
     // Update type_mode_param
-    // 更新相机模式参数类型
+    // Update the camera mode parameter type
     current_type_mode_param = parsed_data->type_mode_param;
     ESP_LOGI(TAG, "[1D06] Camera mode parameter type: 0x%02X", current_type_mode_param);
     
     // Update mode_param_length
-    // 更新模式参数长度
+    // Update the mode parameter length
     current_mode_param_length = parsed_data->mode_param_length;
     ESP_LOGI(TAG, "[1D06] Mode parameter length: %d", current_mode_param_length);
     
     // Update mode_param array
-    // 更新模式参数数组
+    // Update the mode parameter buffer
     memcpy(current_mode_param, parsed_data->mode_param, 20);
 
     // Ensure null termination for safe string printing
-    // 确保字符串 null 终止以便安全打印
+    // Ensure null termination for safe logging
     char mode_param_str[21] = {0};
     memcpy(mode_param_str, parsed_data->mode_param, 20);
     ESP_LOGI(TAG, "[1D06] Mode parameters: %s", mode_param_str);

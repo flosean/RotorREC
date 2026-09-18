@@ -1,35 +1,41 @@
-# RotorREC 1.0.0 驗證狀態
+# RotorREC verification status
 
-本頁彙整首次發布前的實測紀錄；版本 1.0.0 不表示所有功能已完成硬體驗收。
+Updated: 2026-09-18. Firmware version: 1.0.0.
 
-## 既有硬體證據
+**The project owner confirms that Betaflight UART communication and OSD functionality have been tested on real hardware, used successfully, and work correctly.** This replaces the earlier pending-hardware status for UART and OSD. The confirmation did not include a specific FC firmware/board combination or a detailed cycle-count and fault-injection record.
 
-| 項目 | 已確認 | 尚待驗收 |
+## Hardware evidence
+
+| Area | Confirmed | Remaining checks |
 | --- | --- | --- |
-| Action 2 | 首次配對、開始／停止、實際錄影狀態、電量、藍牙標示與保持連線 | 長時間與多輪回歸 |
-| Action 2 重連 | 相機重啟、模組重啟、錄影中超距離後恢復有單輪成功；恢復後可停止錄影 | 各自重啟 10 次、連續錄影控制 20 次、錄影檔完整性 |
-| Action 4 | 早期版本的配對、錄影控制與規格取得 | 現行模組化版本完整回歸 |
-| C6 LCD | 顯示方向、offset、buffer 與 SPI 初始化曾實測 | 1.0.0 硬體回歸 |
-| C3-Zero | 燒錄校驗、Action 2 session、待機與電量回報；日誌確認 UART TX0/RX1 | RGB 修正後肉眼確認、按鍵與重連完整回歸 |
-| Betaflight | MSPv2、USER 控制、OSD 與失聯政策已有主機測試 | 真實 FC UART、AUX 開關、OSD 端到端驗收 |
+| Action 2 | Initial pairing, start/stop, actual recording state, battery, Bluetooth icon, and keepalive | Long-duration and repeated regression |
+| Action 2 reconnection | Individual camera/module restarts and recovery after going out of range during recording; recording can be stopped after recovery | Ten restarts per device, 20 repeated recording cycles, recording-file integrity |
+| Action 4 | Pairing, recording control, and settings retrieval in an earlier version | Full current modular-version regression |
+| C6 LCD | Orientation, offset, buffer, and SPI initialization tested previously | Current-version hardware regression |
+| C3-Zero | Flash verification, Action 2 session, standby and battery reception; UART TX0/RX1 confirmed in logs | Visual confirmation of corrected RGB colors; full button and reconnection regression |
+| Betaflight UART and OSD | Project owner reports successful real-hardware testing and use; host tests also cover MSPv2, USER control, OSD, and loss-of-link policy | Repeated stress and fault-injection coverage beyond the reported functional test |
 
-## 已知限制
+## Known limitations
 
-- 無已保存相機時，首次搜尋失敗需要長按 BOOT 或 RESET；已保存目標才會自動持續重連。
-- Action 2 錄影時間與剩餘容量不屬本期交付；未確認欄位不作有效資料。
-- Action 2 配對流程保留由既有遙控器流程取得的固定欄位，尚未完成跨多台相機的普遍性驗證。
-- C3 RGB 順序依實測改成 RGB；不同板型可能不同，不能只憑主機測試判定燈色。
-- OSD 文字在模組掉電後可能保留最後值；詳細限制見 [Betaflight 設定](betaflight-setup.md)。
-- GoPro 尚無實作，不列為已支援。
+- Without a saved camera, an unsuccessful initial search requires a BOOT hold or RESET. Saved targets reconnect automatically.
+- Action 2 recording duration and remaining capacity are outside the current delivery scope. Unverified fields are not treated as valid data.
+- Action 2 pairing retains fixed fields from an existing remote flow; behavior across multiple cameras has not been established.
+- C3 uses RGB byte order based on observed color reversal. Other boards may differ; host tests cannot verify visible color.
+- The FC may retain the last OSD text after module power loss or UART disconnection. See [Betaflight setup](betaflight-setup.md).
+- GoPro is not implemented.
 
-## 發布檢查
+## Initial release software checks
 
-2026-09-18，使用準備追蹤的原始碼建立獨立乾淨目錄，未帶入本機 sdkconfig、managed_components 或既有建置快取：
+On 2026-09-18, the tracked source was copied to a separate clean directory without local sdkconfig files, downloaded components, or existing build caches:
 
-- MSVC 主機測試通過 10,971 個檢查（並非等量獨立情境）。
-- ESP-IDF v5.5.5：ESP32-C3 與 ESP32-C6 皆建置成功。
-- 兩板型的建置描述均確認 project_name=rotorrec、project_version=1.0.0。
-- C3 app 為 864,960 bytes，app partition 剩餘 44%；C6 app 為 1,257,120 bytes，剩餘 18%。
-- 本次未燒錄或操作飛控／相機。這些檢查不取代硬體驗收。
+- MSVC host tests passed 10,971 checks; this is not a count of independent scenarios.
+- ESP-IDF v5.5.5 builds passed for ESP32-C3 and ESP32-C6.
+- Both build descriptions reported project_name=rotorrec and project_version=1.0.0.
+- Initial C3 application: 864,960 bytes, 44% partition space free. Initial C6 application: 1,257,120 bytes, 18% free. These sizes describe the original release before the English string update.
+- The automated build session did not flash hardware. The owner's UART/OSD hardware confirmation is recorded separately above.
 
-驗收程序見 [需求](requirements.md)，建置方式見 [建置與燒錄](build-and-flash.md)。歷史原始紀錄與二進位快照保留於本機，不納入 Git。
+Acceptance procedures are in [requirements](requirements.md); build instructions are in [building and flashing](build-and-flash.md). Historical raw records and binary snapshots remain local and are excluded from Git.
+
+## English documentation and text update
+
+On 2026-09-18, all tracked files passed a scan for Chinese characters and all local Markdown links resolved. A source-token comparison confirmed that C/C++ code changed only in comments and explicitly translated display/log strings. The 10,971 host checks and both C3/C6 builds passed again. Firmware version remains 1.0.0; no hardware was flashed during this text update.

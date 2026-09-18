@@ -1,95 +1,100 @@
-# RotorREC 目前需求
+# RotorREC requirements
 
-更新日期：2026-09-12
+Updated: 2026-09-18.
 
-Action 2 本階段範圍：連線／重連、實際錄影狀態與開始停止控制、相機電量。錄影時間與容量研究暫停，不列為交付阻礙。
+Action 2 scope: connection and reconnection, actual recording state, start/stop control, and battery level. Recording duration and storage-capacity research are deferred and do not block this release.
 
-板型：保留 ESP32-C6-LCD-1.47 螢幕版；新增 ESP32-C3-Zero 無螢幕版（4 MB Flash、BOOT／USB 日誌／BF OSD／RGB 狀態燈）。兩版共用相機與 BF 邏輯，分開 sdkconfig、build 目錄及 UART 預設腳位；C3 使用 GP0 TX／GP1 RX，GPIO10 控制 WS2812。
+Boards: ESP32-C6-LCD-1.47 with a display, and ESP32-C3-Zero with 4 MB flash, BOOT, USB logs, BF OSD, and RGB indication. Camera and BF logic are shared; sdkconfig, build directories, and UART defaults are separate. C3 uses GP0 TX, GP1 RX, and GPIO10 for the WS2812.
 
-## 1. 產品目標
+## Product goal
 
-使用 ESP32-C6 連接 Betaflight 飛控與運動相機，從飛控的 ARM／AUX 狀態控制錄影，並把相機狀態透過 Betaflight Custom Message 顯示在 OSD。開發板上的 LCD 與 BOOT 按鍵保留作為桌上測試與診斷介面。
+Connect a Betaflight flight controller to an action camera through an ESP32. Control recording from an AUX-assigned USER mode and display camera status through Betaflight Custom Messages. LCD and BOOT provide local operation and diagnostics.
 
-## 2. 目前支援範圍
+## Camera scope
 
-### P0：DJI
+### DJI
 
-需同時保留兩條互不混用的協議路徑：
+Keep two separate protocol paths:
 
-1. **DJI 公開 R SDK**：供 Action 4 與採用公開協議的新型 DJI 相機使用。
-2. **DJI Action 2 legacy DUML**：Action 2 不支援目前的公開 R SDK handshake，必須使用已由實機驗證的舊協議 frame。
+1. **Public R SDK:** Action 4 and cameras implementing the public protocol. Only documented hardware results count as verified support.
+2. **Action 2 legacy DUML:** Action 2 does not use the current public R SDK handshake and requires the verified legacy frames.
 
-不得因兩者同為 DJI 就共用配對 frame 或假設 status 格式相同。
+Do not share pairing frames or assume identical status formats simply because both paths target DJI cameras.
 
-### P1：GoPro
+### GoPro
 
-後續只考慮仍有官方公開連接規格的新款 GoPro。GoPro 尚未開始實作，現在只保留需求位置，不建立假的 driver 或未驗證能力。
+Future work is limited to newer models with official public connection specifications. No GoPro driver is implemented; do not add placeholders or claim unverified support.
 
-### 不在目前範圍
+### Out of scope
 
-- Blackmagic、Sony 與其他相機品牌。
-- 同時控制多台 Action 2。
-- 手機原生 App。若未來需要設定介面，優先考慮板載 Wi-Fi 網頁。
-- 反向控制飛控的馬達、RC、PID 或其他飛行安全參數。
+- Blackmagic, Sony, and other camera brands.
+- Simultaneous control of multiple Action 2 cameras.
+- Native mobile applications. Prefer an onboard Wi-Fi web interface if configuration UI is needed later.
+- Changing flight-controller motor, RC, PID, or other flight-safety settings.
 
-## 3. 配對與重連
+## Pairing and reconnection
 
 ### Action 2
 
-- 第一次配對時允許相機顯示確認提示，使用者在相機上接受。
-- 配對完成後保存相機 BLE MAC 與 address type 到 NVS。
-- 開發板或相機重新開機後，應鎖定已保存的相機並直接恢復 session，不再次要求人工確認。
-- 超距離或其他非預期斷線後，依 2026-09-08 使用者要求，約每秒搜尋已配對相機，找到即停止掃描並連線，不作省電退避。連線與服務探索仍保留必要的逾時保護。
-- 重新連上後要恢復 legacy notification、session 與 keepalive，然後直接允許錄影開始／停止。
-- 長按 BOOT 1.2 秒可中止既有重連並進入全新掃描／配對。
-- 相機成功接受配對後，Action 2 畫面應出現 Bluetooth 標示；此項由使用者觀察驗收。
-- 現有 legacy pairing request 含由官方遙控器流程取得的固定欄位；它只對目前這台 Action 2 驗證過。後續須確認哪些欄位是 controller ID、序號、配對碼或 CRC，再決定是否參數化。
+- Allow initial confirmation on the camera.
+- Save the paired BLE MAC and address type in NVS.
+- After either device restarts, reconnect to the saved camera and restore the session without another manual confirmation.
+- After unexpected loss, scan for the saved camera approximately once per second without power-saving backoff. Stop scanning when found; retain connection and discovery timeouts.
+- Restore legacy notifications, session, and keepalive before accepting recording requests.
+- Holding BOOT for 1.2 seconds cancels reconnection and starts fresh discovery/pairing.
+- Confirm that accepted pairing displays the Bluetooth icon on the camera.
+- Legacy pairing retains fixed fields from an official remote flow, verified only with the current camera. Identify controller ID, serial, pairing code, and CRC fields before generalizing them.
 
-### DJI 公開 R SDK
+### Public R SDK
 
-- 掃描相機、建立 BLE/GATT 連線並執行公開協議驗證。
-- LCD 顯示四位配對碼，使用者在相機端確認。
-- 配對後訂閱相機狀態，取得錄影狀態、模式、規格、電量、錄影時間與剩餘容量／時間。
-- Action 4 既有能力重構後必須做回歸，不能只以編譯成功視為通過。
+- Discover the camera, connect over BLE/GATT, and perform public-protocol verification.
+- Display the four-digit pairing code on LCD or in headless USB logs; accept it on the camera.
+- Subscribe to recording state, mode, settings, battery, recording duration, and remaining capacity/time where supported.
+- Perform Action 4 hardware regression after refactoring; compilation alone is not acceptance.
 
-## 4. 本機操作介面
+## Local interface
 
-- BOOT 短按：已就緒時切換開始／停止錄影。
-- BOOT 長按 1.2 秒：重新掃描／配對。
-- RST：維持硬體重置功能，不作應用按鍵。
-- C3 WS2812：綠燈恆亮表示已連線且待機、綠燈慢閃表示實際錄影、紅燈慢閃表示未連線／搜尋失敗、紅燈快閃表示搜尋／配對／重連；黃燈快閃表示等待狀態／指令確認或儲存中，不以未知資料顯示綠燈。
-- LCD 顯示：連線階段、配對碼、協議類型、重連狀態、錄影狀態、錄影規格、電量、錄影時間與診斷資料。
-- Action 2 尚未解析完整狀態前，不可自行猜測錄影規格或電量；畫面只顯示已確認的資料。
+- BOOT short press: toggle recording when ready.
+- BOOT hold for 1.2 seconds: scan/pair again.
+- RST: hardware reset only.
+- C3 RGB: steady green for confirmed standby, slow green for recording, slow red for disconnected/failed search, fast red for discovery/pairing/reconnection, and fast yellow for unknown/pending/storage state. Unknown status must not appear green.
+- LCD: connection stage, pairing code, protocol, reconnection, recording state, settings, battery, duration, and diagnostics.
+- Show only confirmed Action 2 data; do not infer unparsed recording settings or battery values.
 
-## 5. Betaflight
+## Betaflight
 
-- 目標版本：Betaflight 2025.12 或更新版，MSP API 1.47 以上。
-- 電氣介面：3.3 V UART，ESP32 UART1 預設 GPIO18 TX、GPIO19 RX、115200 8N1，交叉接 FC 的空閒 MSP UART 並共地；可由 menuconfig 調整。
-- 啟動後先查 `MSP_API_VERSION`，版本不足時不啟用自動控制。
-- 讀取：`MSP_FC_VARIANT`、`MSP_BOXIDS`、`MSP_STATUS`。AUX 指派與範圍留在 BF Modes；ESP32 不綁原始 RC 通道。
-- 寫入 OSD：原生 MSPv2 `MSP2_SET_TEXT (0x3007)`，type 7～10 對應 Custom Message 1～4，每行最多 16 bytes。
-- 本期只使用 Custom Message 1 顯示實際錄影／連線狀態、Custom Message 2 顯示相機電量；第 3、4 行不動。文字變更、MSP 重連時更新，另每 5 秒 RAM 補寫以恢復快速 FC 重啟後的文字；完全不發 `MSP_EEPROM_WRITE`。
-- 預設自動化改為 USER1（permanent ID 40，可設定 USER1～4）：模式啟用開始、停用停止，不綁 ARM。需先確認模式映射、有效非失效飛控狀態、相機已就緒且狀態有效，200 ms 去抖且防重送。失聯不發停止指令；啟動／FC 或接收機恢復後先見停用位置才接受新指令。細節與限制見 [串口設定](betaflight-setup.md)。
-- 安全界線：不發送 raw RC、馬達、PID 或其他飛控設定命令。
+UART and OSD functionality have been tested on hardware and confirmed working by the project owner. The following requirements remain the basis for implementation and regression checks.
 
-## 6. 驗收條件
+- Target Betaflight 2025.12 or newer with MSP API 1.47 or newer.
+- Use 3.3 V UART1, 115200 baud, 8N1; C6 defaults to GPIO18 TX/GPIO19 RX, C3 to GP0 TX/GP1 RX. Cross TX/RX with an unused FC MSP UART and share ground. Pins are configurable.
+- Check `MSP_API_VERSION` before enabling automatic control.
+- Read `MSP_FC_VARIANT`, `MSP_BOXIDS`, and `MSP_STATUS`. AUX assignment and ranges remain in BF Modes, without a fixed raw RC channel.
+- Write native MSPv2 `MSP2_SET_TEXT (0x3007)`, types 7-10 for Custom Messages 1-4, at most 16 bytes per line.
+- Use line 1 for actual recording/connection state and line 2 for battery; leave lines 3 and 4 untouched. Update on changes and MSP reconnection, and refresh RAM text every five seconds. Never send `MSP_EEPROM_WRITE`.
+- Default to USER1 (permanent ID 40), configurable through USER4. Activation starts and deactivation stops recording; ARM is not used. Require a valid mode mapping, healthy FC state, ready camera, valid status, 200 ms debounce, and duplicate prevention.
+- Link loss must not send stop. After startup or FC/receiver recovery, require an inactive switch position before new commands. See [Betaflight setup](betaflight-setup.md) for deferred intent and OSD limitations.
+- Never send raw RC, motor, PID, or other FC configuration commands.
 
-### Action 2 最低交付
+## Acceptance and regression criteria
 
-- 第一次配對一次成功。
-- 雙方各自重開機 10 次，不需清除配對、不需再次確認。
-- 超距離斷線後回到範圍內能自行恢復。
-- 重連後 BOOT 可連續完成開始／停止錄影 20 次。
+### Action 2
 
-### 公開 R SDK 最低交付
+- Complete initial pairing successfully.
+- Restart each device 10 times without clearing pairing or requiring confirmation.
+- Recover automatically after returning from out of range.
+- Complete 20 consecutive start/stop operations after reconnection.
 
-- Action 4 完成配對與重連回歸。
-- BOOT 錄影切換 20 次無卡死。
-- LCD 的模式、規格、電量與錄影時間與相機畫面一致。
+### Public R SDK
 
-### Betaflight 最低交付
+- Complete Action 4 pairing and reconnection regression.
+- Complete 20 BOOT recording toggles without lockup.
+- Match LCD mode, settings, battery, and duration to the camera.
 
-- 驗證 API 版本門檻。
-- USER1 啟用／停用各 20 次只產生一次對應錄影命令；通道可在 BF 改派而不改 ESP32。
-- 兩行 OSD 可正確更新且每行不超過 16 bytes；未知／失聯資料不冒充有效狀態。
-- 模組斷電、重啟或 BLE 斷線不影響飛控的飛行控制路徑。
+### Betaflight
+
+- Verify the API version gate.
+- Perform 20 USER1 activation/deactivation cycles with one command per transition; change AUX assignments in BF without changing ESP32 firmware.
+- Update both OSD lines within the 16-byte limit; never present unknown/disconnected values as current data.
+- Verify module power loss, restart, and BLE loss do not affect the FC flight-control path.
+
+General UART/OSD hardware confirmation does not establish completion of every repetition and fault-injection criterion above. See [verification status](verification-status.md).

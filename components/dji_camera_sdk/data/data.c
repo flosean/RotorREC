@@ -33,95 +33,95 @@
 
 #define TAG "DATA"
 
-/* 最大并行等待的命令数量 */
+/* Maximum number of concurrently pending commands */
 /* Maximum number of commands that can be waited in parallel */
 #define MAX_SEQ_ENTRIES 10
 
-/* 定时删除的周期（单位：毫秒） */
+/* Periodic cleanup interval in milliseconds */
 /* Cleanup interval in milliseconds */
 #define CLEANUP_INTERVAL_MS 60000
 
-/* 最长保留时间（单位：秒），超过此时间没有被使用的条目会被清除 */
+/* Maximum retention time in seconds; remove entries unused beyond this limit */
 /* Maximum retention time in seconds, entries unused beyond this time will be cleared */
 #define MAX_ENTRY_AGE 120
 
 static bool data_layer_initialized = false;
 
-/* 条目结构 */
+/* Entry structure */
 /* Entry structure */
 typedef struct {
-    // 是否有效
+    // Whether the entry is valid
     // Whether the entry is valid
     bool in_use;
 
-    // 新增：true 表示基于 seq，false 表示基于 cmd_set 和 cmd_id
+    // True for seq-based entries; false for cmd_set/cmd_id-based entries
     // Added: true means based on seq, false means based on cmd_set and cmd_id
     bool is_seq_based;
 
-    // 如果 is_seq_based 为 true，则有效
+    // Valid when is_seq_based is true
     // Valid if is_seq_based is true
     uint16_t seq;
 
-    // 如果 is_seq_based 为 false，则有效
+    // Valid when is_seq_based is false
     // Valid if is_seq_based is false
     uint8_t cmd_set;
 
-    // 如果 is_seq_based 为 false，则有效
+    // Valid when is_seq_based is false
     // Valid if is_seq_based is false
     uint8_t cmd_id;
 
-    // 解析后的通用结构体
+    // Parsed generic structure
     // Generic structure after parsing
     void *parse_result;
 
-    // 解析结果的长度
+    // Length of the parsed result
     // Length of parsed result
     size_t parse_result_length;
 
-    // 用于同步等待
+    // Used for synchronous waiting
     // For synchronous waiting
     SemaphoreHandle_t sem;
 
-    // 最近访问的时间戳，用于 LRU 策略
+    // Last-access timestamp for LRU eviction
     // Last access timestamp for LRU policy
     TickType_t last_access_time;
 } entry_t;
 
-/* 维护 seq 到解析结果的映射 */
+/* Mapping from sequence numbers to parsed results */
 /* Maintains mapping from seq to parsed results */
 static entry_t s_entries[MAX_SEQ_ENTRIES];
 
-/* 互斥锁，保护 s_seq_entries */
+/* Mutex protecting s_seq_entries */
 /* Mutex to protect s_seq_entries */
 static SemaphoreHandle_t s_map_mutex = NULL;
 
-/* 定时器句柄 */
+/* Timer handle */
 /* Timer handle */
 static TimerHandle_t cleanup_timer = NULL;
 
-/* 用于延迟处理通知数据的任务句柄 */
+/* Task handle for deferred notification processing */
 /* Task handle for delayed notification processing */
 static TaskHandle_t notify_task_handle = NULL;
 
-/* 通知数据队列 */
+/* Notification data queue */
 /* Queue for notification data */
 static QueueHandle_t notify_queue = NULL;
 
-/* 通知数据结构 */
+/* Notification data structure */
 /* Structure for notification data */
 typedef struct {
     uint8_t *data;
     size_t data_length;
 } notify_data_t;
 
-/* 前向声明 */
+/* Forward declarations */
 /* Forward declarations */
 static void notify_processing_task(void *pvParameters);
 static void process_notification_data(const uint8_t *raw_data, size_t raw_data_length);
 
 /**
  * @brief Initialize seq_entries and mark all entries as unused
- *        初始化 seq_entries，将所有条目标记为未使用
+ *        Initialize seq_entries and mark all entries as unused
  */
 static void reset_entries(void) {
     for (int i = 0; i < MAX_SEQ_ENTRIES; i++) {
@@ -145,12 +145,12 @@ static void reset_entries(void) {
 
 /**
  * @brief Find entry by sequence number
- *        查找指定 seq 的条目
+ *        Find the entry for a sequence number
  * 
  * @param seq Sequence number to find
- *            需要查找的 seq 值
+ *            Sequence number to find
  * @return entry_t* Pointer to found entry, NULL if not found
- *                  找到的条目指针，未找到则返回 NULL
+ *                  Pointer to the matching entry, or NULL if not found
  */
 static entry_t* find_entry_by_seq(uint16_t seq) {
     for (int i = 0; i < MAX_SEQ_ENTRIES; i++) {
@@ -164,14 +164,14 @@ static entry_t* find_entry_by_seq(uint16_t seq) {
 
 /**
  * @brief Find entry by command set and ID
- *        查找指定 cmd_set 和 cmd_id 的条目
+ *        Find the entry for cmd_set and cmd_id
  * 
  * @param cmd_set Command set
- *                命令集
+ *                Command set
  * @param cmd_id Command ID
- *               命令 ID
+ *               Command ID
  * @return entry_t* Pointer to found entry, NULL if not found
- *                  找到的条目指针，未找到则返回 NULL
+ *                  Pointer to the matching entry, or NULL if not found
  */
 static entry_t* find_entry_by_cmd_id(uint16_t cmd_set, uint16_t cmd_id) {
     for (int i = 0; i < MAX_SEQ_ENTRIES; i++) {
@@ -186,10 +186,10 @@ static entry_t* find_entry_by_cmd_id(uint16_t cmd_set, uint16_t cmd_id) {
 
 /**
  * @brief Free an entry
- *        释放一个条目
+ *        Free an entry
  * 
  * @param entry Pointer to the entry to be freed
- *              要释放的条目指针
+ *              Pointer to the entry to free
  */
 static void free_entry(entry_t *entry) {
     if (entry) {
@@ -213,16 +213,16 @@ static void free_entry(entry_t *entry) {
 
 /**
  * @brief Allocate a free entry based on sequence number
- *        分配一个空闲的 entry，基于 seq
+ *        Allocate a free entry keyed by sequence number
  * 
  * @param seq Frame sequence number
- *            帧序列号
+ *            Frame sequence number
  * @return entry_t* Pointer to allocated entry, NULL if failed
- *                  返回分配的条目指针，如果失败则返回 NULL
+ *                  Pointer to the allocated entry, or NULL on failure
  */
 static entry_t* allocate_entry_by_seq(uint16_t seq) {
     // First check if an entry with the same seq exists
-    // 首先检查是否已存在相同 seq 的条目
+    // First check for an entry with the same sequence number
     entry_t *existing_entry = find_entry_by_seq(seq);
     if (existing_entry) {
         ESP_LOGI(TAG, "Overwriting existing entry for seq=0x%04X", seq);
@@ -230,11 +230,11 @@ static entry_t* allocate_entry_by_seq(uint16_t seq) {
     }
 
     // For tracking the least recently used entry
-    // 用于记录最久未使用的条目
+    // Track the least recently used entry
     entry_t* oldest_entry = NULL;
 
     // Initialize with current time
-    // 初始时间为当前时间
+    // Initialize the timestamp to the current time
     TickType_t oldest_access_time = xTaskGetTickCount();
 
     for (int i = 0; i < MAX_SEQ_ENTRIES; i++) {
@@ -257,7 +257,7 @@ static entry_t* allocate_entry_by_seq(uint16_t seq) {
         }
 
         // Track the least recently used entry
-        // 最久未使用的条目
+        // Least recently used entry
         if (s_entries[i].last_access_time < oldest_access_time) {
             oldest_access_time = s_entries[i].last_access_time;
             oldest_entry = &s_entries[i];
@@ -265,7 +265,7 @@ static entry_t* allocate_entry_by_seq(uint16_t seq) {
     }
 
     // If no free entry, delete the least recently used entry
-    // 如果没有空闲条目，则删除最久未使用的条目
+    // Evict the least recently used entry if no free entry is available
     if (oldest_entry) {
         ESP_LOGW(TAG, "Deleting the least recently used entry: seq=0x%04X or cmd_set=0x%04X cmd_id=0x%04X",
                  oldest_entry->is_seq_based ? oldest_entry->seq : 0,
@@ -273,7 +273,7 @@ static entry_t* allocate_entry_by_seq(uint16_t seq) {
                  oldest_entry->cmd_id);
         free_entry(oldest_entry);
         // Reallocate
-        // 重新分配
+        // Reallocate
         oldest_entry->in_use = true;
         oldest_entry->is_seq_based = true;
         oldest_entry->seq = seq;
@@ -296,36 +296,36 @@ static entry_t* allocate_entry_by_seq(uint16_t seq) {
 
 /**
  * @brief Allocate a free entry based on command set and ID
- *        分配一个空闲的 entry，基于 cmd_set 和 cmd_id
+ *        Allocate a free entry keyed by cmd_set and cmd_id
  * 
  * @param cmd_set Command set
- *                命令集
+ *                Command set
  * @param cmd_id Command ID
- *               命令 ID
+ *               Command ID
  * @return entry_t* Pointer to allocated entry, NULL if failed
- *                  返回分配的条目指针，如果失败则返回 NULL
+ *                  Pointer to the allocated entry, or NULL on failure
  */
 static entry_t* allocate_entry_by_cmd(uint8_t cmd_set, uint8_t cmd_id) {
     // First check if an entry with the same cmd_set and cmd_id exists
-    // 首先检查是否已存在相同 cmd_set 和 cmd_id 的条目
+    // First check for an entry with the same cmd_set and cmd_id
     entry_t *existing_entry = find_entry_by_cmd_id(cmd_set, cmd_id);
     if (existing_entry) {
         // Entry exists, reuse it
-        // 条目已存在，复用
+        // Reuse the existing entry
         ESP_LOGI(TAG, "Entry for cmd_set=0x%04X cmd_id=0x%04X already exists, it will be overwritten", cmd_set, cmd_id);
         return existing_entry;
     }
 
     // Allocate new entry
-    // 分配新的条目
+    // Allocate a new entry
     entry_t* oldest_entry = NULL;  // For tracking the least recently used non-seq-based entry
-                                  // 用于记录最久未使用的非 seq-based 条目
+                                  // Track the least recently used entry not keyed by sequence number
     TickType_t oldest_access_time = xTaskGetTickCount();
 
     for (int i = 0; i < MAX_SEQ_ENTRIES; i++) {
         if (!s_entries[i].in_use) {
             // Found a free entry
-            // 找到一个空闲条目
+            // Found a free entry
             s_entries[i].in_use = true;
             s_entries[i].is_seq_based = false;
             s_entries[i].seq = 0;
@@ -344,7 +344,7 @@ static entry_t* allocate_entry_by_cmd(uint8_t cmd_set, uint8_t cmd_id) {
         }
 
         // Only consider non-seq-based entries as deletion candidates
-        // 仅考虑非基于 seq 的条目作为候选删除对象
+        // Only entries not keyed by sequence number are eligible for eviction
         if (!s_entries[i].is_seq_based && s_entries[i].last_access_time < oldest_access_time) {
             oldest_access_time = s_entries[i].last_access_time;
             oldest_entry = &s_entries[i];
@@ -352,7 +352,7 @@ static entry_t* allocate_entry_by_cmd(uint8_t cmd_set, uint8_t cmd_id) {
     }
 
     // If no free entry, try to delete the least recently used non-seq-based entry
-    // 如果没有空闲条目，则尝试删除最久未使用的非 seq-based 条目
+    // If no free entry exists, evict the least recently used non-sequence entry
     if (oldest_entry) {
         ESP_LOGW(TAG, "Deleting the least recently used cmd-based entry: cmd_set=0x%04X cmd_id=0x%04X",
                  oldest_entry->cmd_set,
@@ -360,7 +360,7 @@ static entry_t* allocate_entry_by_cmd(uint8_t cmd_set, uint8_t cmd_id) {
         free_entry(oldest_entry);
 
         // Reallocate the deleted entry
-        // 重新分配被删除的条目
+        // Reuse the evicted entry
         oldest_entry->in_use = true;
         oldest_entry->is_seq_based = false;
         oldest_entry->seq = 0;
@@ -384,26 +384,26 @@ static entry_t* allocate_entry_by_cmd(uint8_t cmd_set, uint8_t cmd_id) {
 
 /**
  * @brief Timer cleanup function
- *        定时清理函数
+ *        Periodic cleanup callback
  * 
  * Clean up expired entries and delete unused entries.
  * Periodically run cleanup tasks to free up memory that is no longer needed.
- * 清理过期的条目，删除未使用的条目。
- * 定期运行清理任务，释放不再需要的内存。
+ * Remove expired entries that are no longer in use
+ * Run cleanup periodically to release memory no longer needed
  * 
  * @param xTimer Timer handle that triggered this callback
- *              触发此回调的定时器句柄
+ *              Handle of the timer invoking this callback
  */
 static void cleanup_old_entries(TimerHandle_t xTimer) {
     // Get current system tick count
-    // 获取当前系统时间计数
+    // Get the current system tick count
     TickType_t current_time = xTaskGetTickCount();
     if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to take mutex in cleanup");
         return;
     }
     // Check each entry for expiration
-    // 检查每个条目是否过期
+    // Check each entry for expiration
     for (int i = 0; i < MAX_SEQ_ENTRIES; i++) {
         if (s_entries[i].in_use && (current_time - s_entries[i].last_access_time) > pdMS_TO_TICKS(MAX_ENTRY_AGE * 1000)) {
             if (s_entries[i].is_seq_based) {
@@ -419,14 +419,14 @@ static void cleanup_old_entries(TimerHandle_t xTimer) {
 
 /**
  * @brief Data layer initialization
- *        数据层初始化
+ *        Initialize the data layer
  * 
  * Initialize data layer, including creating mutex, clearing entries, starting cleanup timer task, etc.
- * 初始化数据层，包括创建互斥锁、清空条目、启动定时清理任务等。
+ * Create the mutex, clear entries, and start periodic cleanup
  */
 void data_init(void) {
     // Initialize mutex
-    // 初始化互斥锁
+    // Initialize the mutex
     s_map_mutex = xSemaphoreCreateMutex();
     if (s_map_mutex == NULL) {
         ESP_LOGE(TAG, "Failed to create mutex");
@@ -434,11 +434,11 @@ void data_init(void) {
     }
 
     // Clear all entries
-    // 清空所有条目
+    // Clear all entries
     reset_entries();
 
     // Initialize timer for cleaning up expired entries
-    // 初始化定时器，用于清理过期的条目
+    // Initialize the expiration cleanup timer
     cleanup_timer = xTimerCreate("cleanup_timer", pdMS_TO_TICKS(CLEANUP_INTERVAL_MS), pdTRUE, NULL, cleanup_old_entries);
     if (cleanup_timer == NULL) {
         ESP_LOGE(TAG, "Failed to create cleanup timer");
@@ -447,30 +447,30 @@ void data_init(void) {
     }
 
     // Initialize notification queue
-    // 初始化通知队列
+    // Initialize the notification queue
     notify_queue = xQueueCreate(MAX_SEQ_ENTRIES, sizeof(notify_data_t));
     if (notify_queue == NULL) {
         ESP_LOGE(TAG, "Failed to create notification queue");
     }
 
     // Initialize notification task
-    // 初始化通知任务
+    // Initialize the notification task
     if (xTaskCreate(notify_processing_task, "notify_processing_task", 2048, NULL, 1, &notify_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create notification processing task");
     }
 
     // Mark data layer as initialized
-    // 标记数据层初始化完成
+    // Mark the data layer as initialized
     data_layer_initialized = true;
     ESP_LOGI(TAG, "Data layer initialized successfully");
 }
 
 /**
  * @brief Check if data layer is initialized
- *        检查数据层是否已初始化
+ *        Check whether the data layer is initialized
  * 
  * @return bool Returns true if data layer is initialized, false otherwise
- *              如果数据层已初始化，返回 true；否则返回 false
+ *              Return true if the data layer is initialized; otherwise return false
  */
 bool is_data_layer_initialized(void) {
     return data_layer_initialized;
@@ -478,38 +478,38 @@ bool is_data_layer_initialized(void) {
 
 /**
  * @brief Send data frame with response
- *        发送数据帧（有响应）
+ *        Send a data frame with response
  * 
  * Send data frame to device via BLE and wait for response.
- * 通过 BLE 向设备发送数据帧，并等待响应。
+ * Send a frame over BLE and wait for a response
  * 
  * @param seq Frame sequence number
- *            数据帧的序列号
+ *            Data frame sequence number
  * @param raw_data Data to be sent
- *                 需要发送的数据
+ *                 Data to send
  * @param raw_data_length Length of data
- *                        数据长度
+ *                        Data length
  * 
  * @return esp_err_t ESP_OK on success, error code on failure
- *                   成功返回 ESP_OK，失败返回错误码
+ *                   ESP_OK on success; an error code on failure
  */
 esp_err_t data_write_with_response(uint16_t seq, const uint8_t *raw_data, size_t raw_data_length) {
     // Validate input parameters
-    // 验证输入参数
+    // Validate input arguments
     if (!raw_data || raw_data_length == 0) {
         ESP_LOGE(TAG, "Invalid data or length");
         return ESP_ERR_INVALID_ARG;
     }
 
     // Take mutex for thread safety
-    // 获取互斥锁以保证线程安全
+    // Acquire the mutex for thread safety
     if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to take mutex");
         return ESP_ERR_INVALID_STATE;
     }
 
     // Allocate an entry for this sequence
-    // 为此序列号分配一个条目
+    // Allocate an entry for this sequence number
     entry_t *entry = allocate_entry_by_seq(seq);
     if (!entry) {
         ESP_LOGE(TAG, "No free entry, can't write");
@@ -520,26 +520,26 @@ esp_err_t data_write_with_response(uint16_t seq, const uint8_t *raw_data, size_t
     xSemaphoreGive(s_map_mutex);
 
     // Send write command with response
-    // 发送写命令（有响应）
+    // Send a write command with response
     ESP_LOGI(TAG, "ACTION2_DIAG TX seq=%u len=%u", seq, (unsigned)raw_data_length);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, raw_data, raw_data_length, ESP_LOG_INFO);
     esp_err_t ret = ble_write_with_response(
         s_ble_profile.conn_id,           // Current connection ID
-                                         // 当前连接 ID
+                                         // Current connection ID
         s_ble_profile.write_char_handle, // Write characteristic handle
-                                         // 写特征句柄
+                                         // Write characteristic handle
         raw_data,                        // Data to be sent
-                                         // 要发送的数据
+                                         // Data to send
         raw_data_length                  // Length of data
-                                         // 数据长度
+                                         // Data length
     );
 
     // Handle write failure
-    // 处理写入失败的情况
+    // Handle a failed write
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "ble_write_with_response failed: %s", esp_err_to_name(ret));
         // Clean up on failure
-        // 失败时清理资源
+        // Release resources on failure
         if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             free_entry(entry);
             xSemaphoreGive(s_map_mutex);
@@ -552,38 +552,38 @@ esp_err_t data_write_with_response(uint16_t seq, const uint8_t *raw_data, size_t
 
 /**
  * @brief Send data frame without response
- *        发送数据帧（无响应）
+ *        Send a data frame without response
  * 
  * Send data frame to device via BLE without waiting for response.
- * 通过 BLE 向设备发送数据帧，且不等待响应。
+ * Send a frame over BLE without waiting for a response
  * 
  * @param seq Frame sequence number
- *            数据帧的序列号
+ *            Data frame sequence number
  * @param raw_data Data to be sent
- *                 需要发送的数据
+ *                 Data to send
  * @param raw_data_length Length of data
- *                        数据长度
+ *                        Data length
  * 
  * @return esp_err_t ESP_OK on success, error code on failure
- *                   成功返回 ESP_OK，失败返回错误码
+ *                   ESP_OK on success; an error code on failure
  */
 esp_err_t data_write_without_response(uint16_t seq, const uint8_t *raw_data, size_t raw_data_length) {
     // Validate input parameters
-    // 验证输入参数
+    // Validate input arguments
     if (!raw_data || raw_data_length == 0) {
         ESP_LOGE(TAG, "Invalid raw_data or raw_data_length");
         return ESP_ERR_INVALID_ARG;
     }
 
     // Take mutex for thread safety
-    // 获取互斥锁以保证线程安全
+    // Acquire the mutex for thread safety
     if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to take mutex");
         return ESP_ERR_INVALID_STATE;
     }
 
     // Allocate an entry for this sequence
-    // 为此序列号分配一个条目
+    // Allocate an entry for this sequence number
     entry_t *entry = allocate_entry_by_seq(seq);
     if (!entry) {
         ESP_LOGE(TAG, "No free entry, can't write");
@@ -594,24 +594,24 @@ esp_err_t data_write_without_response(uint16_t seq, const uint8_t *raw_data, siz
     xSemaphoreGive(s_map_mutex);
 
     // Send write command without response
-    // 发送写命令（无响应）
+    // Send a write command without response
     esp_err_t ret = ble_write_without_response(
         s_ble_profile.conn_id,           // Current connection ID
-                                         // 当前连接 ID
+                                         // Current connection ID
         s_ble_profile.write_char_handle, // Write characteristic handle
-                                         // 写特征句柄
+                                         // Write characteristic handle
         raw_data,                        // Data to be sent
-                                         // 要发送的数据
+                                         // Data to send
         raw_data_length                  // Length of data
-                                         // 数据长度
+                                         // Data length
     );
 
     // Handle write failure
-    // 处理写入失败的情况
+    // Handle a failed write
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "ble_write_without_response failed: %s", esp_err_to_name(ret));
         // Clean up on failure
-        // 失败时清理资源
+        // Release resources on failure
         if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             free_entry(entry);
             xSemaphoreGive(s_map_mutex);
@@ -620,7 +620,7 @@ esp_err_t data_write_without_response(uint16_t seq, const uint8_t *raw_data, siz
     }
 
     // For write without response, release entry immediately
-    // 对于无响应写，立即释放条目
+    // Release the entry immediately for a write without response
     if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         free_entry(entry);
         xSemaphoreGive(s_map_mutex);
@@ -631,55 +631,55 @@ esp_err_t data_write_without_response(uint16_t seq, const uint8_t *raw_data, siz
 
 /**
  * @brief Wait for parsing result of specific sequence number
- *        等待特定 seq 的解析结果
+ *        Wait for the parsed result of a specific sequence number
  * 
  * Wait for parsing result of a specific sequence number and return to caller.
- * 等待一个特定 seq 的解析结果，并返回给调用者。
+ * Wait for the specified sequence number and return its parsed result to the caller
  * 
  * @param seq Frame sequence number
- *            数据帧的序列号
+ *            Data frame sequence number
  * @param timeout_ms Timeout in milliseconds
- *                   等待的超时时间（毫秒）
+ *                   Wait timeout in milliseconds
  * @param out_result Return parsed result
- *                   返回解析结果
+ *                   Output parsed result
  * @param out_result_length Return length of parsed result
- *                          返回解析结果的长度
+ *                          Output length of the parsed result
  * 
  * @return esp_err_t ESP_OK on success, error code on failure
- *                   成功返回 ESP_OK，失败返回错误码
+ *                   ESP_OK on success; an error code on failure
  */
 esp_err_t data_wait_for_result_by_seq(uint16_t seq, int timeout_ms, void **out_result, size_t *out_result_length) {
     // Validate input parameters
-    // 验证输入参数
+    // Validate input arguments
     if (!out_result || !out_result_length) {
         ESP_LOGE(TAG, "out_result or out_result_length is NULL");
         return ESP_ERR_INVALID_ARG;
     }
 
     // Get start time and calculate timeout ticks
-    // 获取开始时间并计算超时时钟数
+    // Record the start time and calculate the timeout in ticks
     TickType_t start_time = xTaskGetTickCount();
     TickType_t timeout_ticks = pdMS_TO_TICKS(timeout_ms);
 
     while (true) {
         // Take mutex for thread safety
-        // 获取互斥锁以保证线程安全
+        // Acquire the mutex for thread safety
         if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
             ESP_LOGE(TAG, "Failed to take mutex");
             return ESP_ERR_INVALID_STATE;
         }
 
         // Try to find entry
-        // 尝试查找条目
+        // Try to find the entry
         entry_t *entry = find_entry_by_seq(seq);
 
         if (entry) {
             // Increase reference count to prevent release during waiting
-            // 增加引用计数，防止在等待期间被释放
+            // Increment the reference count to prevent release while waiting
             xSemaphoreGive(s_map_mutex);
 
             // Wait for semaphore to be released
-            // 等待信号量被释放
+            // Wait for the semaphore
             if (xSemaphoreTake(entry->sem, timeout_ticks) != pdTRUE) {
                 ESP_LOGW(TAG, "Wait for seq=0x%04X timed out", seq);
                 if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -690,10 +690,10 @@ esp_err_t data_wait_for_result_by_seq(uint16_t seq, int timeout_ms, void **out_r
             }
 
             // Get parsing result
-            // 取出解析结果
+            // Retrieve the parsed result
             if (entry->parse_result) {
                 // Allocate new memory for out_result
-                // 为 out_result 分配新内存
+                // Allocate new memory for out_result
                 *out_result = malloc(entry->parse_result_length);
                 if (*out_result == NULL) {
                     ESP_LOGE(TAG, "Failed to allocate memory for out_result");
@@ -705,10 +705,10 @@ esp_err_t data_wait_for_result_by_seq(uint16_t seq, int timeout_ms, void **out_r
                 }
 
                 // Copy entry->parse_result data to out_result
-                // 拷贝 entry->parse_result 数据到 out_result
+                // Copy entry->parse_result into out_result
                 memcpy(*out_result, entry->parse_result, entry->parse_result_length);
                 *out_result_length = entry->parse_result_length;  // Set length
-                                                                 // 设置长度
+                                                                 // Set the length
             } else {
                 ESP_LOGE(TAG, "Parse result is NULL for seq=0x%04X", seq);
                 if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -719,7 +719,7 @@ esp_err_t data_wait_for_result_by_seq(uint16_t seq, int timeout_ms, void **out_r
             }
 
             // Free entry
-            // 释放条目
+            // Release the entry
             if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 free_entry(entry);
                 xSemaphoreGive(s_map_mutex);
@@ -729,7 +729,7 @@ esp_err_t data_wait_for_result_by_seq(uint16_t seq, int timeout_ms, void **out_r
         }
 
         // Check for timeout if entry not found
-        // 如果没有找到条目，检查是否超时
+        // If the entry was not found, check for a timeout
         TickType_t elapsed_time = xTaskGetTickCount() - start_time;
         if (elapsed_time >= timeout_ticks) {
             ESP_LOGW(TAG, "Timeout while waiting for seq=0x%04X, no entry found", seq);
@@ -738,67 +738,67 @@ esp_err_t data_wait_for_result_by_seq(uint16_t seq, int timeout_ms, void **out_r
         }
 
         // Entry not found, release lock and wait before retry
-        // 没有找到条目，释放锁并等待一段时间再重试
+        // If no entry was found, release the lock and wait before retrying
         xSemaphoreGive(s_map_mutex);
         vTaskDelay(pdMS_TO_TICKS(10)); // Wait 10ms before retry
-                                       // 等待 10 毫秒后重试
+                                       // Retry after 10 milliseconds
     }
 }
 
 /**
  * @brief Wait for parsing result by command set and ID, and return sequence number
- *        等待特定 cmd_set 和 cmd_id 的解析结果，并返回 seq
+ *        Wait for a cmd_set/cmd_id result and return its sequence number
  * 
  * Wait for parsing result of a specific command set and ID, and return its corresponding sequence number.
- * 等待一个特定 cmd_set 和 cmd_id 的解析结果，并返回其对应的 seq 值。
+ * Wait for the specified command result and return the corresponding sequence number
  * 
  * @param cmd_set Command set
- *                命令集
+ *                Command set
  * @param cmd_id Command ID
- *               命令 ID
+ *               Command ID
  * @param timeout_ms Timeout in milliseconds
- *                   等待的超时时间（毫秒）
+ *                   Wait timeout in milliseconds
  * @param out_seq Return sequence number
- *                返回的 seq 值
+ *                Output sequence number
  * @param out_result Return parsed result
- *                   返回解析结果
+ *                   Output parsed result
  * @param out_result_length Return length of parsed result
- *                          返回解析结果的长度
+ *                          Output length of the parsed result
  * 
  * @return esp_err_t ESP_OK on success, error code on failure
- *                   成功返回 ESP_OK，失败返回错误码
+ *                   ESP_OK on success; an error code on failure
  */
 esp_err_t data_wait_for_result_by_cmd(uint8_t cmd_set, uint8_t cmd_id, int timeout_ms, uint16_t *out_seq, void **out_result, size_t *out_result_length) {
     // Validate input parameters
-    // 验证输入参数
+    // Validate input arguments
     if (!out_result || !out_seq || !out_result_length) {
         ESP_LOGE(TAG, "out_result, out_seq or out_result_length is NULL");
         return ESP_ERR_INVALID_ARG;
     }
 
     // Get start time and calculate timeout ticks
-    // 获取开始时间并计算超时时钟数
+    // Record the start time and calculate the timeout in ticks
     TickType_t start_time = xTaskGetTickCount();
     TickType_t timeout_ticks = pdMS_TO_TICKS(timeout_ms);
 
     while (true) {
         // Take mutex for thread safety
-        // 获取互斥锁以保证线程安全
+        // Acquire the mutex for thread safety
         if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
             ESP_LOGE(TAG, "Failed to take mutex");
             return ESP_ERR_INVALID_STATE;
         }
 
         // Try to find entry
-        // 尝试查找条目
+        // Try to find the entry
         entry_t *entry = find_entry_by_cmd_id(cmd_set, cmd_id);
 
         if (entry) {
             // Check if entry already has result
-            // 检查条目是否已经有结果
+            // Check whether the entry already has a result
             if (entry->parse_result != NULL) {
                 // Entry already has result, get it immediately
-                // 条目已经有结果，立即获取
+                // Retrieve an available result immediately
                 *out_result = malloc(entry->parse_result_length);
                 if (*out_result == NULL) {
                     ESP_LOGE(TAG, "Failed to allocate memory for out_result");
@@ -807,29 +807,29 @@ esp_err_t data_wait_for_result_by_cmd(uint8_t cmd_set, uint8_t cmd_id, int timeo
                 }
                 
                 // Copy entry->parse_result data to out_result
-                // 拷贝 entry->parse_result 数据到 out_result
+                // Copy entry->parse_result into out_result
                 memcpy(*out_result, entry->parse_result, entry->parse_result_length);
                 *out_result_length = entry->parse_result_length;
                 *out_seq = entry->seq;
                 
                 // Free entry
-                // 释放条目
+                // Release the entry
                 free_entry(entry);
                 xSemaphoreGive(s_map_mutex);
                 return ESP_OK;
             }
             
             // Entry exists but no result yet, need to wait
-            // 条目存在但还没有结果，需要等待
+            // The entry exists but its result is not ready; wait
             SemaphoreHandle_t sem_to_wait = entry->sem;
             xSemaphoreGive(s_map_mutex);
             
             // Wait for semaphore to be released
-            // 等待信号量被释放
+            // Wait for the semaphore
             if (xSemaphoreTake(sem_to_wait, timeout_ticks) != pdTRUE) {
                 ESP_LOGW(TAG, "Wait for cmd_set=0x%04X cmd_id=0x%04X timed out", cmd_set, cmd_id);
                 // Try to clean up the entry if it still exists
-                // 尝试清理条目（如果仍然存在）
+                // Try to clean up the entry if it still exists
                 if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                     entry_t *timeout_entry = find_entry_by_cmd_id(cmd_set, cmd_id);
                     if (timeout_entry) {
@@ -841,14 +841,14 @@ esp_err_t data_wait_for_result_by_cmd(uint8_t cmd_set, uint8_t cmd_id, int timeo
             }
             
             // Re-acquire mutex to get the result
-            // 重新获取互斥锁以获取结果
+            // Reacquire the mutex to retrieve the result
             if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
                 ESP_LOGE(TAG, "Failed to take mutex after semaphore wait");
                 return ESP_ERR_INVALID_STATE;
             }
             
             // Find entry again after waiting
-            // 等待后重新查找条目
+            // Look up the entry again after waiting
             entry = find_entry_by_cmd_id(cmd_set, cmd_id);
             if (!entry) {
                 ESP_LOGE(TAG, "Entry not found after semaphore wait");
@@ -857,10 +857,10 @@ esp_err_t data_wait_for_result_by_cmd(uint8_t cmd_set, uint8_t cmd_id, int timeo
             }
             
             // Get parsing result
-            // 取出解析结果
+            // Retrieve the parsed result
             if (entry->parse_result) {
                 // Allocate new memory for out_result
-                // 为 out_result 分配新内存
+                // Allocate new memory for out_result
                 *out_result = malloc(entry->parse_result_length);
                 if (*out_result == NULL) {
                     ESP_LOGE(TAG, "Failed to allocate memory for out_result");
@@ -869,7 +869,7 @@ esp_err_t data_wait_for_result_by_cmd(uint8_t cmd_set, uint8_t cmd_id, int timeo
                     return ESP_ERR_NO_MEM;
                 }
                 // Copy entry->parse_result data to out_result
-                // 拷贝 entry->parse_result 数据到 out_result
+                // Copy entry->parse_result into out_result
                 memcpy(*out_result, entry->parse_result, entry->parse_result_length);
                 *out_result_length = entry->parse_result_length;
             } else {
@@ -880,11 +880,11 @@ esp_err_t data_wait_for_result_by_cmd(uint8_t cmd_set, uint8_t cmd_id, int timeo
             }
 
             // Save sequence number
-            // 保存序列号
+            // Save the sequence number
             *out_seq = entry->seq;
 
             // Free entry
-            // 释放条目
+            // Release the entry
             free_entry(entry);
             xSemaphoreGive(s_map_mutex);
 
@@ -892,7 +892,7 @@ esp_err_t data_wait_for_result_by_cmd(uint8_t cmd_set, uint8_t cmd_id, int timeo
         }
 
         // Check for timeout if entry not found
-        // 如果没有找到条目，检查是否超时
+        // If the entry was not found, check for a timeout
         TickType_t elapsed_time = xTaskGetTickCount() - start_time;
         if (elapsed_time >= timeout_ticks) {
             ESP_LOGW(TAG, "Timeout while waiting for cmd_set=0x%04X cmd_id=0x%04X, no entry found", cmd_set, cmd_id);
@@ -901,23 +901,23 @@ esp_err_t data_wait_for_result_by_cmd(uint8_t cmd_set, uint8_t cmd_id, int timeo
         }
 
         // Entry not found, release lock and wait before retry
-        // 没有找到条目，释放锁并等待一段时间再重试
+        // If no entry was found, release the lock and wait before retrying
         xSemaphoreGive(s_map_mutex);
         vTaskDelay(pdMS_TO_TICKS(10)); // Wait 10ms before retry
-                                       // 等待 10 毫秒后重试
+                                       // Retry after 10 milliseconds
     }
 }
 
 /**
  * @brief Register camera status update callback
- *        注册相机状态更新回调函数
+ *        Register the camera state update callback
  * 
  * This function registers a callback function for camera status updates. After registration,
  * the callback function will be called to synchronize the latest camera status when specific notifications are received.
- * 此函数用于注册一个相机状态更新的回调函数。注册后，当接收到特定的通知时，会调用该回调函数同步相机最新状态。
+ * Register a callback invoked by relevant notifications to synchronize camera state
  * 
  * @param callback Callback function pointer, pointing to user-defined callback function
- *                 回调函数指针，指向用户定义的回调函数
+ *                 Pointer to the user-defined callback
  */
 static camera_status_update_cb_t status_update_callback = NULL;
 void data_register_status_update_callback(camera_status_update_cb_t callback) {
@@ -931,27 +931,27 @@ void data_register_new_status_update_callback(new_camera_status_update_cb_t call
 
 /**
  * @brief Task for processing notification data
- *        处理通知数据的任务
+ *        Notification processing task
  * 
  * This task runs in task context and processes notification data from the queue
- * 此任务在任务上下文中运行，处理来自队列的通知数据
+ * Process notifications from the queue in task context
  * 
  * @param pvParameters Task parameters (unused)
- *                    任务参数（未使用）
+ *                    Task argument (unused)
  */
 static void notify_processing_task(void *pvParameters) {
     notify_data_t notify_data;
     
     while (1) {
         // Wait for notification data from queue
-        // 等待来自队列的通知数据
+        // Wait for notification data from the queue
         if (xQueueReceive(notify_queue, &notify_data, portMAX_DELAY) == pdTRUE) {
             // Process the notification data
-            // 处理通知数据
+            // Process notification data
             process_notification_data(notify_data.data, notify_data.data_length);
             
             // Free the allocated data
-            // 释放分配的数据
+            // Free the allocated data
             free(notify_data.data);
         }
     }
@@ -959,34 +959,34 @@ static void notify_processing_task(void *pvParameters) {
 
 /**
  * @brief Process notification data (moved from interrupt context to task context)
- *        处理通知数据（从中断上下文移到任务上下文）
+ *        Process notifications in task context instead of interrupt context
  * 
  * This function contains the original logic from receive_camera_notify_handler
- * 此函数包含来自 receive_camera_notify_handler 的原始逻辑
+ * Contains the original receive_camera_notify_handler logic
  * 
  * @param raw_data Raw notification data
- *                 原始通知数据
+ *                 Raw notification data
  * @param raw_data_length Data length
- *                        数据长度
+ *                        Data length
  */
 static void process_notification_data(const uint8_t *raw_data, size_t raw_data_length) {
     // Validate input parameters
-    // 验证输入参数
+    // Validate input arguments
     if (!raw_data || raw_data_length < 2) {
         ESP_LOGW(TAG, "Notify data is too short or null, skip parse");
         return;
     }
 
     // Check frame header
-    // 检查帧头
+    // Check the frame header
     if (raw_data[0] == 0xAA || raw_data[0] == 0xaa) {
         ESP_LOGI(TAG, "Notification received, attempting to parse...");
 
         // ESP_LOG_BUFFER_HEX(TAG, raw_data, raw_data_length);  // Print notification content
-                                                                // 打印通知内容
+                                                                // Log the notification contents
 
         // Print notification content in pink color
-        // 用粉色打印通知内容
+        // Print the notification contents in pink
         printf("\033[95m");
         printf("RX: [");
         for (size_t i = 0; i < raw_data_length; i++) {
@@ -1000,12 +1000,12 @@ static void process_notification_data(const uint8_t *raw_data, size_t raw_data_l
         printf("\033[0;32m");
                                                              
         // Define parsing result structure
-        // 定义解析结果结构体
+        // Declare the parsed result structure
         protocol_frame_t frame;
         memset(&frame, 0, sizeof(frame));
 
         // Call protocol_parse_notification to parse notification frame
-        // 调用 protocol_parse_notification 解析通知帧
+        // Parse the notification frame with protocol_parse_notification
         int ret = protocol_parse_notification(raw_data, raw_data_length, &frame);
         if (ret != 0) {
             ESP_LOGE(TAG, "Failed to parse notification frame, error: %d", ret);
@@ -1013,12 +1013,12 @@ static void process_notification_data(const uint8_t *raw_data, size_t raw_data_l
         }
 
         // Parse data segment
-        // 解析数据段
+        // Parse the data segment
         void *parse_result = NULL;
         size_t parse_result_length = 0;
         if (frame.data && frame.data_length > 0) {
             // Assume protocol_parse_data returns void* type
-            // 假设 protocol_parse_data 返回 void* 类型
+            // Assume protocol_parse_data returns void*
             parse_result = protocol_parse_data(frame.data, frame.data_length, frame.cmd_type, &parse_result_length);
             if (parse_result == NULL) {
                 ESP_LOGE(TAG, "Failed to parse data segment, parse_result is null");
@@ -1032,51 +1032,51 @@ static void process_notification_data(const uint8_t *raw_data, size_t raw_data_l
         }
 
         // Get actual seq (assuming frame has seq field)
-        // 获取实际的 seq（假设 frame 里有 seq 字段）
+        // Get the actual sequence number from the frame's seq field
         uint16_t actual_seq = frame.seq;
         uint8_t actual_cmd_set = frame.data[0];
         uint8_t actual_cmd_id = frame.data[1];
         ESP_LOGI(TAG, "Parsed seq = 0x%04X, cmd_set=0x%04X, cmd_id=0x%04X", actual_seq, actual_cmd_set, actual_cmd_id);
 
         // Find corresponding entry
-        // 查找对应的条目
+        // Find the corresponding entry
         if (xSemaphoreTake(s_map_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             entry_t *entry = find_entry_by_seq(actual_seq);
             if (entry) {
                 // Assume parse_result is void* object returned by protocol_parse_data
-                // 假设 parse_result 是 protocol_parse_data 返回的 void* 对象
+                // Assume parse_result is the void* returned by protocol_parse_data
                 if (parse_result != NULL) {
                     // Put parsing result into corresponding entry
-                    // 将解析结果放入对应的条目
+                    // Store the parsed result in the corresponding entry
                     entry->parse_result = parse_result;  // Store void* result in entry's value field
-                                                         // 将 void* 结果存储到条目的 value 字段
+                                                         // Store the void* result in the entry's value field
                     entry->parse_result_length = parse_result_length; // Record result length
-                                                                      // 记录结果长度
+                                                                      // Record the result length
                     // Wake up waiting task
-                    // 唤醒等待的任务
+                    // Wake the waiting task
                     xSemaphoreGive(entry->sem);
                 } else {
                     ESP_LOGE(TAG, "Parsing data failed, entry not updated");
                 }
             } else {
                 // Camera actively pushed notification
-                // 相机主动推送来的
+                // Unsolicited camera notification
                 ESP_LOGW(TAG, "No waiting entry found for seq=0x%04X, creating a new entry by cmd_set=0x%04X cmd_id=0x%04X", actual_seq, actual_cmd_set, actual_cmd_id);
                 // Allocate a new entry
-                // 分配一个新的条目
+                // Allocate a new entry
                 entry = allocate_entry_by_cmd(actual_cmd_set, actual_cmd_id);
                 if (entry == NULL) {
                     ESP_LOGE(TAG, "Failed to allocate entry for seq=0x%04X cmd_set=0x%04X cmd_id=0x%04X", actual_seq, actual_cmd_set, actual_cmd_id);
                 } else {
                     // Initialize parsing result
-                    // 初始化解析结果
+                    // Initialize the parsed result
                     entry->parse_result = parse_result;
                     entry->parse_result_length = parse_result_length;
                     entry->seq = actual_seq;
                     entry->last_access_time = xTaskGetTickCount();
                     ESP_LOGI(TAG, "New entry allocated for seq=0x%04X", actual_seq);
                     // Wake up any waiting tasks
-                    // 唤醒任何等待的任务
+                    // Wake any waiting tasks
                     xSemaphoreGive(entry->sem);
                 }
             }
@@ -1084,10 +1084,10 @@ static void process_notification_data(const uint8_t *raw_data, size_t raw_data_l
         }
 
         // Handle camera actively pushed status
-        // 相机主动推送状态处理
+        // Handle unsolicited camera state updates
         if (actual_cmd_set == 0x1D && actual_cmd_id == 0x02 && status_update_callback) {
             // Create new memory copy for status update callback
-            // 为状态更新回调创建新的内存副本
+            // Create a separate memory copy for the state callback
             void *status_copy = NULL;
             if (parse_result != NULL && parse_result_length > 0) {
                 status_copy = malloc(parse_result_length);
@@ -1101,10 +1101,10 @@ static void process_notification_data(const uint8_t *raw_data, size_t raw_data_l
         }
 
         // Handle new camera actively pushed status
-        // 新相机主动推送状态处理
+        // Handle the newer camera state update format
         if (actual_cmd_set == 0x1D && actual_cmd_id == 0x06 && new_status_update_callback) {
             // Create new memory copy for new status update callback
-            // 为新状态更新回调创建新的内存副本
+            // Create a separate memory copy for the new state callback
             void *new_status_copy = NULL;
             if (parse_result != NULL && parse_result_length > 0) {
                 new_status_copy = malloc(parse_result_length);
@@ -1123,26 +1123,26 @@ static void process_notification_data(const uint8_t *raw_data, size_t raw_data_l
 
 /**
  * @brief Handle camera notifications and parse data (callback function)
- *        处理相机通知并解析数据（回调函数）
+ *        Camera notification parsing callback
  * 
  * This function is called from BLE interrupt context and queues the data for processing
- * 此函数从 BLE 中断上下文调用，并将数据排队等待处理
+ * Called from BLE interrupt context; queues data for later processing
  * 
  * @param raw_data Raw notification data
- *                 原始通知数据
+ *                 Raw notification data
  * @param raw_data_length Data length
- *                        数据长度
+ *                        Data length
  */
 void receive_camera_notify_handler(const uint8_t *raw_data, size_t raw_data_length) {
     // Validate input parameters
-    // 验证输入参数
+    // Validate input arguments
     if (!raw_data || raw_data_length < 2) {
         ESP_LOGW(TAG, "Notify data is too short or null, skip parse");
         return;
     }
 
     // Allocate memory for the data
-    // 为数据分配内存
+    // Allocate memory for the data
     uint8_t *data_copy = malloc(raw_data_length);
     if (data_copy == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory for notification data");
@@ -1150,18 +1150,18 @@ void receive_camera_notify_handler(const uint8_t *raw_data, size_t raw_data_leng
     }
 
     // Copy the data
-    // 复制数据
+    // Copy the data
     memcpy(data_copy, raw_data, raw_data_length);
 
     // Prepare notification data structure
-    // 准备通知数据结构
+    // Prepare the notification structure
     notify_data_t notify_data = {
         .data = data_copy,
         .data_length = raw_data_length
     };
 
     // Send to queue for processing in task context
-    // 发送到队列，在任务上下文中处理
+    // Enqueue for processing in task context
     if (xQueueSend(notify_queue, &notify_data, 0) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to queue notification data");
         free(data_copy);
@@ -1170,15 +1170,15 @@ void receive_camera_notify_handler(const uint8_t *raw_data, size_t raw_data_leng
 
 /**
  * @brief Send raw bytes directly without protocol frame creation
- *        直接发送原始字节数据，略去协议帧创建环节
+ *        Send raw bytes directly without constructing a protocol frame
  *
  * @param raw_data_string String containing raw bytes in various formats
- *                        包含原始字节的字符串，支持多种格式
+ *                        String containing raw bytes in one of the supported formats
  * @param timeout_ms Timeout for waiting result (in milliseconds)
- *                   等待结果的超时时间（以毫秒为单位）
+ *                   Result timeout in milliseconds
  * 
  * @return esp_err_t ESP_OK on success, error code on failure
- *                   成功返回 ESP_OK，失败返回错误码
+ *                   ESP_OK on success; an error code on failure
  */
 esp_err_t data_send_raw_bytes(const char *raw_data_string, int timeout_ms) {
     ESP_LOGI(TAG, "%s: Sending raw bytes: %s", __FUNCTION__, raw_data_string);
@@ -1189,7 +1189,7 @@ esp_err_t data_send_raw_bytes(const char *raw_data_string, int timeout_ms) {
     }
 
     // Parse the input string to extract bytes
-    // 解析输入字符串以提取字节
+    // Parse the input string into bytes
     size_t max_bytes = strlen(raw_data_string) / 2; // Estimate max possible bytes
     uint8_t *raw_bytes = malloc(max_bytes);
     if (raw_bytes == NULL) {
@@ -1202,7 +1202,7 @@ esp_err_t data_send_raw_bytes(const char *raw_data_string, int timeout_ms) {
     
     while (*ptr && byte_count < max_bytes) {
         // Skip whitespace, commas, hyphens, colons
-        // 跳过空格、逗号、连字符、冒号
+        // Skip spaces, commas, hyphens, and colons
         while (*ptr && (*ptr == ' ' || *ptr == ',' || *ptr == '-' || *ptr == ':')) {
             ptr++;
         }
@@ -1210,7 +1210,7 @@ esp_err_t data_send_raw_bytes(const char *raw_data_string, int timeout_ms) {
         if (!*ptr) break;
         
         // Parse hex byte (support both uppercase and lowercase)
-        // 解析十六进制字节（支持大小写）
+        // Parse hexadecimal bytes, accepting upper and lower case
         char hex_str[3] = {0};
         if (isxdigit((unsigned char)*ptr)) {
             hex_str[0] = tolower(*ptr++);
@@ -1218,14 +1218,14 @@ esp_err_t data_send_raw_bytes(const char *raw_data_string, int timeout_ms) {
                 hex_str[1] = tolower(*ptr++);
             } else {
                 // Single digit, pad with 0
-                // 单个数字，用0填充
+                // Pad a single digit with zero
                 hex_str[1] = '0';
                 memmove(hex_str + 1, hex_str, 2);
                 hex_str[0] = '0';
             }
             
             // Convert hex string to byte
-            // 将十六进制字符串转换为字节
+            // Convert the hexadecimal string to bytes
             char *endptr;
             unsigned long value = strtoul(hex_str, &endptr, 16);
             if (endptr == hex_str + 2) {
@@ -1245,8 +1245,8 @@ esp_err_t data_send_raw_bytes(const char *raw_data_string, int timeout_ms) {
     ESP_LOGI(TAG, "Parsed %zu bytes from input string", byte_count);
 
     // Print parsed bytes for debugging
-    // 打印解析后的字节，便于调试
-    printf("\033[96m");  // 设置青色输出
+    // Log the parsed bytes for debugging
+    printf("\033[96m");  // Select cyan output
     printf("Raw TX: [");
     for (size_t i = 0; i < byte_count; i++) {
         printf("%02X", raw_bytes[i]);
@@ -1258,7 +1258,7 @@ esp_err_t data_send_raw_bytes(const char *raw_data_string, int timeout_ms) {
     printf("\033[0m");
 
     // Send the raw bytes directly using a dummy sequence number
-    // 直接发送原始字节，使用虚拟序列号
+    // Send raw bytes with a dummy sequence number
     uint16_t dummy_seq = 0xFFFF;
     esp_err_t ret = data_write_without_response(dummy_seq, raw_bytes, byte_count);
     

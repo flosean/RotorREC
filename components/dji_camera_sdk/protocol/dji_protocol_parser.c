@@ -29,41 +29,41 @@
 #define TAG "DJI_PROTOCOL_PARSER"
 
 /* Protocol frame field length definitions */
-/* 协议帧部分长度定义 */
+/* Protocol frame field lengths */
 
 // SOF start byte
-// SOF 起始字节
+// SOF start byte
 #define PROTOCOL_SOF_LENGTH 1
 // Ver/Length field
-// Ver/Length 字段
+// Ver/Length field
 #define PROTOCOL_VER_LEN_LENGTH 2
 // CmdType
 #define PROTOCOL_CMD_TYPE_LENGTH 1
 // ENC encryption field
-// ENC 加密字段
+// ENC encryption field
 #define PROTOCOL_ENC_LENGTH 1
 // RES reserved bytes
-// RES 保留字节
+// RES reserved byte
 #define PROTOCOL_RES_LENGTH 3
 // SEQ sequence number
-// SEQ 序列号
+// SEQ sequence number
 #define PROTOCOL_SEQ_LENGTH 2
 // CRC-16 checksum
-// CRC-16 校验
+// CRC-16 checksum
 #define PROTOCOL_CRC16_LENGTH 2
 // CmdSet field
-// CmdSet 字段
+// CmdSet field
 #define PROTOCOL_CMD_SET_LENGTH 1
 // CmdID field
-// CmdID 字段
+// CmdID field
 #define PROTOCOL_CMD_ID_LENGTH 1
 // CRC-32 checksum
-// CRC-32 校验
+// CRC-32 checksum
 #define PROTOCOL_CRC32_LENGTH 4
 
 /**
  * Define header length (excluding CmdSet, CmdID and payload)
- * 定义帧头长度（不包含 CmdSet、CmdID 和有效载荷）
+ * Header length excluding CmdSet, CmdID, and payload
  */
 #define PROTOCOL_HEADER_LENGTH ( \
     PROTOCOL_SOF_LENGTH +        \
@@ -78,13 +78,13 @@
 
 /**
  * Define tail length (only includes CRC-32)
- * 定义帧尾长度（仅包含 CRC-32）
+ * Trailer length containing only CRC-32
  */
 #define PROTOCOL_TAIL_LENGTH PROTOCOL_CRC32_LENGTH
 
 /**
  * Define total frame length macro (dynamic calculation, including DATA segment)
- * 定义帧总长度宏（动态计算，包含 DATA 段）
+ * Total frame length macro including the variable DATA segment
  */
 #define PROTOCOL_FULL_FRAME_LENGTH(data_length) ( \
     PROTOCOL_HEADER_LENGTH +                      \
@@ -95,25 +95,25 @@
 
 /**
  * Parse notification frame
- * 解析通知帧
+ * Parse a notification frame
  *
  * Takes raw frame data and length, returns parsed result in frame_out structure
- * 传入帧原始数据、帧长度，frame_out 结构体作为载体返回
+ * Parse raw frame bytes and length into frame_out
  *
  * @param frame_data Raw frame data
- *                   帧原始数据
+ *                   Raw frame data
  * @param frame_length Frame length
- *                     帧长度
+ *                     Frame length
  * @param frame_out Output structure for parsed result
- *                  解析结果输出结构体
+ *                  Output structure for the parsed result
  *
  * @return 0 on success, negative value on failure
- *         成功返回 0，失败返回负值
+ *         Return 0 on success, or a negative value on failure
  */
 int protocol_parse_notification(const uint8_t *frame_data, size_t frame_length, protocol_frame_t *frame_out)
 {
     // Check minimum frame length
-    // 检查最小帧长度
+    // Check the minimum frame length
     if (frame_length < 16)
     { // SOF(1) + Ver/Length(2) + CmdType(1) + ENC(1) + RES(3) + SEQ(2) + CRC-16(2) + CRC-32(4)
         ESP_LOGE(TAG, "Frame too short to be valid");
@@ -121,7 +121,7 @@ int protocol_parse_notification(const uint8_t *frame_data, size_t frame_length, 
     }
 
     // Check frame header (SOF)
-    // 检查帧头 (SOF)
+    // Check the start-of-frame byte (SOF)
     if (frame_data[0] != 0xAA)
     {
         ESP_LOGE(TAG, "Invalid SOF: 0x%02X", frame_data[0]);
@@ -129,12 +129,12 @@ int protocol_parse_notification(const uint8_t *frame_data, size_t frame_length, 
     }
 
     // Parse Ver/Length
-    // 解析 Ver/Length
+    // Parse Ver/Length
     uint16_t ver_length = (frame_data[2] << 8) | frame_data[1];
     uint16_t version = ver_length >> 10;            // High 6 bits for version
-                                                    // 高 6 位为版本号
+                                                    // The upper 6 bits contain the version
     uint16_t expected_length = ver_length & 0x03FF; // Low 10 bits for frame length
-                                                    // 低 10 位为帧长度
+                                                    // The lower 10 bits contain the frame length
 
     if (expected_length != frame_length)
     {
@@ -143,10 +143,10 @@ int protocol_parse_notification(const uint8_t *frame_data, size_t frame_length, 
     }
 
     // Verify CRC-16
-    // 验证 CRC-16
+    // Validate CRC-16
     uint16_t crc16_received = (frame_data[11] << 8) | frame_data[10];
     uint16_t crc16_calculated = calculate_crc16(frame_data, 10); // From SOF to SEQ
-                                                                 // 从 SOF 到 SEQ
+                                                                 // From SOF through SEQ
     if (crc16_received != crc16_calculated)
     {
         ESP_LOGE(TAG, "CRC-16 mismatch: received 0x%04X, calculated 0x%04X", crc16_received, crc16_calculated);
@@ -154,11 +154,11 @@ int protocol_parse_notification(const uint8_t *frame_data, size_t frame_length, 
     }
 
     // Verify CRC-32
-    // 验证 CRC-32
+    // Validate CRC-32
     uint32_t crc32_received = (frame_data[frame_length - 1] << 24) | (frame_data[frame_length - 2] << 16) |
                               (frame_data[frame_length - 3] << 8) | frame_data[frame_length - 4];
     uint32_t crc32_calculated = calculate_crc32(frame_data, frame_length - 4); // From SOF to DATA
-                                                                               // 从 SOF 到 DATA
+                                                                               // From SOF through DATA
     if (crc32_received != crc32_calculated)
     {
         ESP_LOGE(TAG, "CRC-32 mismatch: received 0x%08X, calculated 0x%08X", (unsigned int)crc32_received, (unsigned int)crc32_calculated);
@@ -166,7 +166,7 @@ int protocol_parse_notification(const uint8_t *frame_data, size_t frame_length, 
     }
 
     // Fill parsing results into structure
-    // 填充解析结果到结构体
+    // Populate the parsed result structure
     frame_out->sof = frame_data[0];
     frame_out->version = version;
     frame_out->frame_length = expected_length;
@@ -177,17 +177,17 @@ int protocol_parse_notification(const uint8_t *frame_data, size_t frame_length, 
     frame_out->crc16 = crc16_received;
 
     // Process data segment (DATA)
-    // 处理数据段 (DATA)
+    // Process the DATA segment
     if (frame_length > 16)
     { // DATA segment exists
-      // DATA 段存在
+      // The DATA segment is present
         frame_out->data = &frame_data[12];
         frame_out->data_length = frame_length - 16; // DATA length
-                                                    // DATA 长度
+                                                    // DATA length
     }
     else
     { // DATA segment is empty
-      // DATA 段为空
+      // The DATA segment is empty
         frame_out->data = NULL;
         frame_out->data_length = 0;
         ESP_LOGW(TAG, "DATA segment is empty");
@@ -201,22 +201,22 @@ int protocol_parse_notification(const uint8_t *frame_data, size_t frame_length, 
 
 /**
  * @brief Parse data segment from protocol frame
- *        解析协议帧中的数据段
+ *        Parse the protocol frame's DATA segment
  *
  * Takes DATA segment, length and command type, returns parsed result length through data_length_without_cmd_out
- * 传入 DATA 数据段、长度和命令类型，data_length_without_cmd_out 返回上层
+ * Parse DATA bytes, length, and command type; return data_length_without_cmd_out to the caller
  *
  * @param data Raw data segment
- *             原始数据段
+ *             Raw DATA segment
  * @param data_length Length of data segment
- *                    数据段长度
+ *                    DATA segment length
  * @param cmd_type Command type
- *                 命令类型
+ *                 Command type
  * @param data_length_without_cmd_out Output parameter for data length without cmdSet&CmdID
- *                                    不包含 cmdSet&CmdID 的数据长度输出参数
+ *                                    Output data length excluding cmdSet and CmdID
  *
  * @return void* Pointer to parsed result structure, NULL on failure
- *               指向解析结果结构体的指针，失败时返回 NULL
+ *               Parsed structure pointer, or NULL on failure
  */
 void *protocol_parse_data(const uint8_t *data, size_t data_length, uint8_t cmd_type, size_t *data_length_without_cmd_out)
 {
@@ -229,7 +229,7 @@ void *protocol_parse_data(const uint8_t *data, size_t data_length, uint8_t cmd_t
     uint8_t cmd_set = data[0];
     uint8_t cmd_id = data[1];
 
-    // 查找对应的命令描述符
+    // Find the matching command descriptor
     // Find corresponding command descriptor
     const data_descriptor_t *descriptor = find_data_descriptor(cmd_set, cmd_id);
 
@@ -239,7 +239,7 @@ void *protocol_parse_data(const uint8_t *data, size_t data_length, uint8_t cmd_t
         return NULL;
     }
 
-    // 取出应答帧数据
+    // Extract acknowledgement frame data
     // Extract response frame data
     const uint8_t *response_data = &data[2];
     size_t response_length = data_length - 2;
@@ -285,26 +285,26 @@ void *protocol_parse_data(const uint8_t *data, size_t data_length, uint8_t cmd_t
 
 /**
  * @brief Create protocol frame
- *        创建协议帧
+ *        Create the protocol frame
  *
  * Creates a complete protocol frame with given parameters and data structure
- * 根据给定的参数和数据结构创建完整的协议帧
+ * Create a complete protocol frame from parameters and an input structure
  *
  * @param cmd_set Command set
- *                命令集
+ *                Command set
  * @param cmd_id Command ID
- *               命令 ID
+ *               Command ID
  * @param cmd_type Command type
- *                 命令类型
+ *                 Command type
  * @param structure Pointer to data structure
- *                 数据结构指针
+ *                 Data structure pointer
  * @param seq Sequence number
- *            序列号
+ *            Sequence number
  * @param frame_length_out Output parameter for total frame length
- *                        总帧长度输出参数
+ *                        Output total frame length
  *
  * @return uint8_t* Pointer to created frame buffer, NULL on failure
- *                  指向创建的帧缓冲区的指针，失败时返回 NULL
+ *                  Created frame buffer, or NULL on failure
  */
 uint8_t *protocol_create_frame(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, const void *structure, uint16_t seq, size_t *frame_length_out)
 {
@@ -312,11 +312,11 @@ uint8_t *protocol_create_frame(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type
     uint8_t *payload_data = NULL;
 
     // Create payload data from structure
-    // 从结构体创建有效载荷数据
+    // Create payload bytes from the structure
     payload_data = data_creator_by_structure(cmd_set, cmd_id, cmd_type, structure, &data_length);
 
     // Handle empty payload case
-    // 处理空数据段的情况
+    // Handle an empty DATA segment
     if (payload_data == NULL && data_length > 0)
     {
         ESP_LOGE(TAG, "Failed to create payload data with non-zero length");
@@ -324,11 +324,11 @@ uint8_t *protocol_create_frame(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type
     }
 
     // Calculate total frame length
-    // 计算总帧长度
+    // Calculate the total frame length
     *frame_length_out = PROTOCOL_HEADER_LENGTH + data_length + PROTOCOL_TAIL_LENGTH;
 
     // Allocate memory for complete frame
-    // 为完整帧分配内存
+    // Allocate memory for the complete frame
     uint8_t *frame = (uint8_t *)malloc(*frame_length_out);
     if (frame == NULL)
     {
@@ -338,78 +338,78 @@ uint8_t *protocol_create_frame(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type
     }
 
     // Initialize frame content
-    // 初始化帧内容
+    // Initialize the frame contents
     memset(frame, 0, *frame_length_out);
 
     // Fill protocol header
-    // 填充协议头部
+    // Populate the protocol header
     size_t offset = 0;
     frame[offset++] = 0xAA; // SOF start byte
-                            // SOF 起始字节
+                            // SOF start byte
 
     // Ver/Length field
-    // Ver/Length 字段
+    // Ver/Length field
     uint16_t version = 0; // Fixed version number
-                          // 固定版本号
+                          // Fixed protocol version
     uint16_t ver_length = (version << 10) | (*frame_length_out & 0x03FF);
     frame[offset++] = ver_length & 0xFF;        // Ver/Length low byte
-                                                // Ver/Length 低字节
+                                                // Low byte of Ver/Length
     frame[offset++] = (ver_length >> 8) & 0xFF; // Ver/Length high byte
-                                                // Ver/Length 高字节
+                                                // High byte of Ver/Length
 
     // Fill command type
-    // 填充命令类型
+    // Populate the command type
     frame[offset++] = cmd_type;
 
     // ENC (no encryption, fixed 0)
-    // ENC（不加密，固定 0）
+    // ENC: no encryption, fixed at 0
     frame[offset++] = 0x00;
 
     // RES (reserved bytes, fixed 0)
-    // RES（保留字节，固定 0）
+    // RES: reserved byte, fixed at 0
     frame[offset++] = 0x00;
     frame[offset++] = 0x00;
     frame[offset++] = 0x00;
 
     // Sequence number
-    // 序列号
+    // Sequence number
     frame[offset++] = seq & 0xFF;        // Low byte of sequence number
-                                         // 序列号低字节
+                                         // Low byte of the sequence number
     frame[offset++] = (seq >> 8) & 0xFF; // High byte of sequence number
-                                         // 序列号高字节
+                                         // High byte of the sequence number
 
     // Calculate and fill CRC-16 (covers from SOF to SEQ)
-    // 计算并填充 CRC-16（覆盖从 SOF 到 SEQ）
+    // Calculate and write CRC-16 over SOF through SEQ
     uint16_t crc16 = calculate_crc16(frame, offset);
     frame[offset++] = crc16 & 0xFF;        // CRC-16 low byte
-                                           // CRC-16 低字节
+                                           // Low byte of CRC-16
     frame[offset++] = (crc16 >> 8) & 0xFF; // CRC-16 high byte
-                                           // CRC-16 高字节
+                                           // High byte of CRC-16
 
     // Fill command set and ID
-    // 填充命令集和命令 ID
+    // Populate the command set and command ID
     frame[offset++] = cmd_set;
     frame[offset++] = cmd_id;
 
     // Fill payload data
-    // 填充有效载荷数据
+    // Populate the payload
     memcpy(&frame[offset], payload_data, data_length);
     offset += data_length;
 
     // Calculate and fill CRC-32 (covers from SOF to DATA)
-    // 计算并填充 CRC-32（覆盖从 SOF 到 DATA）
+    // Calculate and write CRC-32 over SOF through DATA
     uint32_t crc32 = calculate_crc32(frame, offset);
     frame[offset++] = crc32 & 0xFF;         // CRC-32 byte 1
-                                            // CRC-32 第 1 字节
+                                            // CRC-32 byte 1
     frame[offset++] = (crc32 >> 8) & 0xFF;  // CRC-32 byte 2
-                                            // CRC-32 第 2 字节
+                                            // CRC-32 byte 2
     frame[offset++] = (crc32 >> 16) & 0xFF; // CRC-32 byte 3
-                                            // CRC-32 第 3 字节
+                                            // CRC-32 byte 3
     frame[offset++] = (crc32 >> 24) & 0xFF; // CRC-32 byte 4
-                                            // CRC-32 第 4 字节
+                                            // CRC-32 byte 4
 
     // Free payload data
-    // 释放有效载荷数据
+    // Free the payload data
     free(payload_data);
 
     return frame;

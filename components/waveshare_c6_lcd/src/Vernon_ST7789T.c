@@ -167,9 +167,9 @@ static esp_err_t panel_st7789t_init(esp_lcd_panel_t *panel)
     // esp_lcd_panel_io_tx_param(io, LCD_CMD_COLMOD, (uint8_t[]) {st7789t->colmod_cal,}, 1);
     
     /* Memory Data Access Control, MX=MV=1, MY=ML=MH=0, RGB=0 */
-    esp_lcd_panel_io_tx_param(io, 0x36, (uint8_t []){0x00}, 1);                           // 0x36: 接口像素格式 X镜像，Y镜像
+    esp_lcd_panel_io_tx_param(io, 0x36, (uint8_t []){0x00}, 1);                           // 0x36: interface pixel format, X and Y mirroring
     /* Interface Pixel Format, 16bits/pixel for RGB/MCU interface */
-    esp_lcd_panel_io_tx_param(io, 0x3A, (uint8_t []){0x55}, 1);                           // 0x3A: Porch 设置
+    esp_lcd_panel_io_tx_param(io, 0x3A, (uint8_t []){0x55}, 1);                           // 0x3A: porch configuration
     
     esp_lcd_panel_io_tx_param(io, 0xB0, (uint8_t []){0x00, 0xE8}, 2);   
     /* Porch Setting */

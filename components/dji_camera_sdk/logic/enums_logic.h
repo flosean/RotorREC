@@ -22,48 +22,48 @@
 
 typedef enum {
     CMD_NO_RESPONSE = 0x00,      // Command frame - No response required after sending data
-                                 // 命令帧 - 发送数据后不需要应答
+                                 // Command frame: no acknowledgement required
     CMD_RESPONSE_OR_NOT = 0x01,  // Command frame - Response required, no error if not received
-                                 // 命令帧 - 发送数据后需要应答，没收到结果不报错
+                                 // Command frame: acknowledgement required; no error if no result arrives
     CMD_WAIT_RESULT = 0x02,      // Command frame - Response required, error if not received
-                                 // 命令帧 - 发送数据后需要应答，没收到结果会报错
+                                 // Command frame: acknowledgement required; report an error if no result arrives
 
     ACK_NO_RESPONSE = 0x20,      // Response frame - No response required (00100000)
-                                 // 应答帧 - 不需要应答 (00100000)
+                                 // Acknowledgement frame: no further acknowledgement required (00100000)
     ACK_RESPONSE_OR_NOT = 0x21,  // Response frame - Response required, no error if not received (00100001)
-                                 // 应答帧 - 需要应答，没收到结果不报错 (00100001)
+                                 // Acknowledgement frame: acknowledgement required; no error if absent (00100001)
     ACK_WAIT_RESULT = 0x22       // Response frame - Response required, error if not received (00100010)
-                                 // 应答帧 - 需要应答，没收到结果会报错 (00100010)
+                                 // Acknowledgement frame: acknowledgement required; report an error if absent (00100010)
 } cmd_type_t;
 
 typedef enum {
-    CAMERA_MODE_SLOW_MOTION        = 0x00,  // 慢动作 / Slow Motion
-    CAMERA_MODE_NORMAL             = 0x01,  // 视频 / Video
-    CAMERA_MODE_TIMELAPSE          = 0x02,  // 静止延时 / Timelapse
-    CAMERA_MODE_PHOTO              = 0x05,  // 拍照 / Photo
-    CAMERA_MODE_HYPERLAPSE         = 0x0A,  // 运动延时 / Hyperlapse
-    CAMERA_MODE_LIVE_STREAMING     = 0x1A,  // 直播 / Live Streaming
-    CAMERA_MODE_UVC_STREAMING      = 0x23,  // UVC 直播 / UVC Live Streaming
-    CAMERA_MODE_SUPERNIGHT         = 0x28,  // 低光视频（超级夜景）/ SuperNight
-    CAMERA_MODE_SUBJECT_TRACKING   = 0x34,  // 人物跟随 / Subject Tracking
+    CAMERA_MODE_SLOW_MOTION        = 0x00,  // Slow Motion
+    CAMERA_MODE_NORMAL             = 0x01,  // Video
+    CAMERA_MODE_TIMELAPSE          = 0x02,  // Timelapse
+    CAMERA_MODE_PHOTO              = 0x05,  // Photo
+    CAMERA_MODE_HYPERLAPSE         = 0x0A,  // Hyperlapse
+    CAMERA_MODE_LIVE_STREAMING     = 0x1A,  // Live Streaming
+    CAMERA_MODE_UVC_STREAMING      = 0x23,  // UVC Live Streaming
+    CAMERA_MODE_SUPERNIGHT         = 0x28,  // SuperNight
+    CAMERA_MODE_SUBJECT_TRACKING   = 0x34,  // Subject Tracking
 
-    CAMERA_MODE_PANORAMIC_VIDEO_360  = 0x38, // 全景视频 / Panoramic Video (Osmo360)
-    CAMERA_MODE_HYPERLAPSE_360       = 0x3A, // 运动延时 / Hyperlapse (Osmo360)
-    CAMERA_MODE_SELFIE_360           = 0x3C, // 自拍模式 / Selfie Mode (Osmo360)
-    CAMERA_MODE_PANORAMIC_PHOTO_360  = 0x3F, // 全景照片 / Panoramic Photo (Osmo360)
-    CAMERA_MODE_BOOST_VIDEO_360      = 0x41, // 极广角视频 / Boost Video (Osmo360)
-    CAMERA_MODE_VORTEX_360           = 0x43, // 旋转模式 / Vortex (Osmo360)
-    CAMERA_MODE_PANORAMIC_SUPERNIGHT_360         = 0x44,  // 全景超级夜景 / 360° SuperNight (Osmo360)
-    CAMERA_MODE_SINGLE_LENS_SUPERNIGHT_360       = 0x4A   // 单镜头超级夜景 / Single Lens SuperNight (Osmo360)
+    CAMERA_MODE_PANORAMIC_VIDEO_360  = 0x38, // Panoramic Video (Osmo360)
+    CAMERA_MODE_HYPERLAPSE_360       = 0x3A, // Hyperlapse (Osmo360)
+    CAMERA_MODE_SELFIE_360           = 0x3C, // Selfie Mode (Osmo360)
+    CAMERA_MODE_PANORAMIC_PHOTO_360  = 0x3F, // Panoramic Photo (Osmo360)
+    CAMERA_MODE_BOOST_VIDEO_360      = 0x41, // Boost Video (Osmo360)
+    CAMERA_MODE_VORTEX_360           = 0x43, // Vortex (Osmo360)
+    CAMERA_MODE_PANORAMIC_SUPERNIGHT_360         = 0x44,  // 360-degree SuperNight (Osmo360)
+    CAMERA_MODE_SINGLE_LENS_SUPERNIGHT_360       = 0x4A   // Single Lens SuperNight (Osmo360)
 } camera_mode_t;
 const char* camera_mode_to_string(camera_mode_t mode);
 
 typedef enum {
-    CAMERA_STATUS_SCREEN_OFF = 0x00,          // 屏幕关闭 / Screen off
-    CAMERA_STATUS_LIVE_STREAMING = 0x01,      // 直播 / Live streaming (including screen-on without recording)
-    CAMERA_STATUS_PLAYBACK = 0x02,            // 回放 / Playback
-    CAMERA_STATUS_PHOTO_OR_RECORDING = 0x03,  // 拍照或录像中 / Photo or recording
-    CAMERA_STATUS_PRE_RECORDING = 0x05        // 预录制中 / Pre-recording
+    CAMERA_STATUS_SCREEN_OFF = 0x00,          // Screen off
+    CAMERA_STATUS_LIVE_STREAMING = 0x01,      // Live streaming (including screen-on without recording)
+    CAMERA_STATUS_PLAYBACK = 0x02,            // Playback
+    CAMERA_STATUS_PHOTO_OR_RECORDING = 0x03,  // Photo or recording
+    CAMERA_STATUS_PRE_RECORDING = 0x05        // Pre-recording
 } camera_status_t;
 const char* camera_status_to_string(camera_status_t status);
 
@@ -76,8 +76,8 @@ typedef enum {
     VIDEO_RESOLUTION_2K_4_3 = 95,        // 2720x2040P 2.7K 4:3
     VIDEO_RESOLUTION_4K_4_3 = 103,       // 4096x3072P 4K 4:3
     VIDEO_RESOLUTION_4K_9_16 = 109,      // 4096x2160P 4K 9:16
-    VIDEO_RESOLUTION_L = 4,              // 拍照画幅 L / Ultra Wide 30MP (Osmo360)
-    VIDEO_RESOLUTION_M = 3,              // 拍照画幅 M / Wide 20MP (Osmo360)
+    VIDEO_RESOLUTION_L = 4,              // Ultra Wide 30MP (Osmo360)
+    VIDEO_RESOLUTION_M = 3,              // Wide 20MP (Osmo360)
     VIDEO_RESOLUTION_S = 2               // Standard 12MP (Osmo360)
 } video_resolution_t;
 const char* video_resolution_to_string(video_resolution_t res);
@@ -98,7 +98,7 @@ const char* fps_idx_to_string(fps_idx_t fps);
 
 typedef enum {
     EIS_MODE_OFF = 0,      // Off
-                           // 关闭
+                           // Off
     EIS_MODE_RS = 1,       // RS
     EIS_MODE_RS_PLUS = 3,  // RS+
     EIS_MODE_HB = 4,       // HB
@@ -108,13 +108,13 @@ const char* eis_mode_to_string(eis_mode_t mode);
 
 typedef enum {
     PUSH_MODE_OFF = 0,                    // Off
-                                          // 关闭
+                                          // Off
     PUSH_MODE_SINGLE,                     // Single
-                                          // 单次
+                                          // Once
     PUSH_MODE_PERIODIC,                   // Periodic
-                                          // 周期
+                                          // Periodic
     PUSH_MODE_PERIODIC_WITH_STATE_CHANGE  // Periodic + State Change Push
-                                          // 周期 + 状态变化推送
+                                          // Periodic plus updates on state changes
 } push_mode_t;
 
 typedef enum {

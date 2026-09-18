@@ -1,80 +1,77 @@
-# 程式架構
+# Architecture
 
-更新日期：2026-09-12
+## Design principles
 
-## 設計原則
-
-目前只有一個共用相機控制介面；真正不同的協議才拆 adapter。DJI 已經有兩個實際 adapter，因此值得建立 seam。GoPro 尚未開發，所以不先建立空白實作或通用框架。
+The application uses one shared camera control interface and separate adapters for genuinely different protocols. DJI currently requires two adapters. GoPro has no implementation, so there is no placeholder driver or speculative generic framework.
 
 ```text
 app_main
-├─ platform/display ── Waveshare LCD component ── LVGL
-├─ platform/boot_button
-├─ ui/dashboard ────── camera_controller_state
-├─ camera/camera_controller
-│  └─ camera/dji
-│     ├─ dji_rs_sdk ───── DJI 公開 R SDK component
-│     └─ dji_action2 ──── legacy DUML + NVS + keepalive
-└─ betaflight
-   ├─ msp_v2 ─────────── frame + CRC8-DVB-S2
-   ├─ osd_messages ───── MSP2_SET_TEXT / Custom Message
-   ├─ bf_control ─────── mode map / switch policy / actual camera OSD
-   └─ bf_bridge ──────── UART1 request/reply / polling / ACK cache
+  platform/display -> Waveshare LCD component -> LVGL
+  platform/boot_button
+  ui/dashboard -> camera_controller_state
+  camera/camera_controller
+    camera/dji/dji_rs_sdk -> DJI public R SDK component
+    camera/dji/dji_action2 -> legacy DUML, NVS, keepalive
+  betaflight
+    msp_v2 -> framing and CRC8-DVB-S2
+    osd_messages -> MSP2_SET_TEXT / Custom Message
+    bf_control -> mode mapping, switch policy, actual camera OSD
+    bf_bridge -> UART1 request/reply, polling, ACK cache
 ```
 
-## 模組責任
+## Module responsibilities
 
-### 板型建置
+### Board builds
 
-- C6-LCD-1.47：編入 LCD／LVGL／dashboard，保留原 `build-modular` 與根目錄 sdkconfig。
-- C3-Zero：`tools/c3-zero.ps1` 使用 `build-c3-zero` 及獨立 sdkconfig；編入 `ui/headless_status`，不編入顯示依賴。只使用本地／IDF 元件，關閉 component manager，避免更動 C6 dependency lock。
-- 相機與 Betaflight 模組共用；UART 預設值與保護腳位按板型區分，C3 不可使用 C6 的 USB/Flash 腳位配置。
-- C3 的 `ui/status_indicator` 是可主機測試的狀態／閃爍映射；`platform/status_led` 用 GPIO10 硬體 RMT 輸出，`status_led_color.h` 處理可主機測試的資料順序（依此板紅綠對調回報改為 RGB），不介入 BLE 控制。RMT 故障只停用燈輸出，不中止相機主流程。
+- C6-LCD-1.47 includes LCD, LVGL, and the dashboard, using `build-modular` and the root sdkconfig.
+- C3-Zero uses `tools/c3-zero.ps1`, `build-c3-zero`, and an independent sdkconfig. It includes `ui/headless_status` and excludes display dependencies. Component Manager is disabled to preserve the C6 dependency lock.
+- Camera and Betaflight modules are shared. UART defaults and protected pins depend on the board; C3 must not reuse C6 USB/flash pin assumptions.
+- `ui/status_indicator` maps state to testable blink patterns. `platform/status_led` drives GPIO10 through RMT. `status_led_color.h` provides testable serialization, using RGB for this board. RMT failure disables LED output without stopping the camera workflow.
 
 ### `main/camera/camera_controller.*`
 
-- 對應用程式提供唯一的配對、短按錄影與狀態查詢介面。
-- 決定先嘗試公開 R SDK，失敗後再轉入 Action 2 legacy 路徑。
-- Action 2 已有 profile 時直接進重連流程。
-- UI 不直接呼叫 DJI SDK，也不讀 BLE 全域變數。
+- Provides pairing, recording-button, explicit recording-request, and state-query interfaces.
+- Tries the public R SDK before falling back to the Action 2 legacy path.
+- Reconnects directly when an Action 2 profile is already saved.
+- Keeps DJI SDK calls and BLE globals out of UI code.
 
 ### `main/camera/dji/dji_rs_sdk.*`
 
-- 包裝 DJI 公開 R SDK 的配對、狀態訂閱與錄影控制。
-- 把 DJI SDK 的 enum／frame 轉成共用 `camera_snapshot_t`。
-- 此檔不處理 Action 2 legacy frame。
+- Wraps public R SDK pairing, status subscription, and recording control.
+- Converts DJI enums and frames to the shared `camera_snapshot_t`.
+- Does not process Action 2 legacy frames.
 
 ### `main/camera/dji/dji_action2.*`
 
-- 保存 Action 2 legacy 配對、session wake、keepalive、錄影控制與 ACK frame。
-- 保存／讀取 NVS profile。
-- 處理 notification 與錄影命令確認。
-- 02/70 錄影狀態及 0d/02 電量已實測；02/80 未驗證欄位僅診斷，不可覆蓋已確認狀態。
+- Owns legacy pairing, session wake, keepalive, recording control, and acknowledgement frames.
+- Saves and restores the NVS profile.
+- Handles notifications and recording command confirmation.
+- Uses verified 02/70 recording state and 0d/02 battery data. Unverified 02/80 fields remain diagnostic and cannot overwrite confirmed state.
 
 ### `main/betaflight/*`
 
-- `msp_v2` 負責 MSPv2 frame、串流 parser、長度檢查與 CRC。
-- `osd_messages` 只負責四行 Custom Message payload 與 16-byte 限制。
-- `bf_control` 是可在主機測試的 USER 模式映射、去抖／失聯政策及兩行相機 OSD 格式化。
-- `bf_bridge` 使用 UART1 獨立任務驗證 FC/API、輪詢 BOXIDS/STATUS、寫入 volatile OSD 文字並處理 ACK／逾時。只依賴共用 camera_controller，不依賴 DJI 細節。
-- 相機控制新增非阻塞、明確目標狀態 request_recording；與 BOOT 共用命令門檻，避免盲目 toggle。UART 與 BLE 實機整合仍待測試。
+- `msp_v2`: framing, stream parsing, length checks, and CRC.
+- `osd_messages`: four Custom Message payloads and the 16-byte limit.
+- `bf_control`: testable USER mode mapping, debounce and loss-of-link policy, and two camera OSD lines.
+- `bf_bridge`: a dedicated UART1 task that validates the FC/API, polls BOXIDS/STATUS, writes volatile OSD text, and handles acknowledgements and timeouts. It depends on the shared controller, not DJI details.
+- Non-blocking `request_recording` specifies the desired state and shares command gating with BOOT to avoid blind toggling. Betaflight UART and OSD operation have been confirmed on hardware by the project owner.
 
 ### `components/dji_camera_sdk`
 
-DJI 官方 Osmo controller demo 的本機元件副本。`ble.c/.h` 與 `data.c` 包含本專案為 Action 2 診斷、address type 與指定 MAC 重連所做的修改。第三方授權保留在元件目錄。
+A local copy of the DJI Osmo controller demo subset. `ble.c/.h` and `data.c` include Action 2 diagnostics, address type handling, and targeted reconnection. Third-party notices remain in the component directory.
 
 ### `components/waveshare_c6_lcd`
 
-只保留此開發板所需的 ST7789 與 LVGL port。旋轉後 34-pixel offset、320×20 draw buffer、SPI2 初始化與 40 MHz SPI 都封裝在此元件。
+The board's ST7789 and LVGL port, including the rotated 34-pixel offset, 320x20 draw buffer, SPI2 initialization, and 40 MHz clock.
 
-## 相依規則
+## Dependency rules
 
-- `ui` 只能依賴共用 camera types，不可 include `ble.h` 或 DJI protocol header。
-- `platform` 不可包含相機協議。
-- Action 2 與 R SDK 不互相 include。
-- Betaflight 不依賴 DJI；未來 GoPro 也應能共用相同 Betaflight 狀態輸出。
-- 第三方碼留在 `components`，專案行為留在 `main`。
+- UI depends on shared camera types, not `ble.h` or DJI protocol headers.
+- Platform code contains no camera protocols.
+- Action 2 and R SDK adapters do not include each other.
+- Betaflight does not depend on DJI; a future GoPro adapter should share its status output.
+- Third-party code stays in `components`; application behavior stays in `main`.
 
-## 新增相機的方式
+## Adding a camera
 
-GoPro 真正開始開發時才新增 `main/camera/gopro/`，並讓 `camera_controller` 多一個實際選擇分支。若屆時共同操作仍只有 connect、toggle record、get state，不擴充更大的抽象層；只有出現第二個非 DJI adapter 後，再評估 function table。
+Add `main/camera/gopro/` only when implementation begins, then add a real selection branch in the controller. If the shared operations remain connect, toggle recording, and get state, keep the existing interface. Reconsider a function table only when a second non-DJI adapter warrants it.

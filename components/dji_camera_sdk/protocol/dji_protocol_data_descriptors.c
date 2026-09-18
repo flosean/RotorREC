@@ -27,40 +27,40 @@
 #define TAG "DJI_PROTOCOL_DATA_DESCRIPTORS"
 
 /* Structure support, but need to define creator and parser for each structure */
-/* 结构体支持，但要为每个结构体定义 creator 和 parser */
+/* Structure support requires a creator and parser for each structure */
 const data_descriptor_t data_descriptors[] = {
     // Camera mode switch
-    // 拍摄模式切换
+    // Shooting mode switch
     {0x1D, 0x04, (data_creator_func_t)camera_mode_switch_creator, (data_parser_func_t)camera_mode_switch_parser},
     // Version query
-    // 版本号查询
+    // Version query
     {0x00, 0x00, NULL, (data_parser_func_t)version_query_parser},
     // Record control
-    // 拍录控制
+    // Recording control
     {0x1D, 0x03, (data_creator_func_t)record_control_creator, (data_parser_func_t)record_control_parser},
     // GPS data push
-    // GPS 数据推送
+    // GPS data push
     {0x00, 0x17, (data_creator_func_t)gps_data_creator, (data_parser_func_t)gps_data_parser},
     // Connection request
-    // 连接请求
+    // Connection request
     {0x00, 0x19, (data_creator_func_t)connection_data_creator, (data_parser_func_t)connection_data_parser},
     // Camera status subscription
-    // 相机状态订阅
+    // Camera status subscription
     {0x1D, 0x05, (data_creator_func_t)camera_status_subscription_creator, NULL},
     // Camera status push
-    // 相机状态推送
+    // Camera status notification
     {0x1D, 0x02, NULL, (data_parser_func_t)camera_status_push_data_parser},
     // New Camera status push
-    // 新相机状态推送
+    // New camera status notification
     {0x1D, 0x06, NULL, (data_parser_func_t)new_camera_status_push_data_parser},
     // Key report
-    // 按键上报
+    // Button report
     {0x00, 0x11, (data_creator_func_t)key_report_creator, (data_parser_func_t)key_report_parser},
 };
 const size_t DATA_DESCRIPTORS_COUNT = sizeof(data_descriptors) / sizeof(data_descriptors[0]);
 
 /* Structure support creators and parsers
- * 结构体支持的 creator 和 parser */
+ * Structure creators and parsers */
 uint8_t* camera_mode_switch_creator(const void *structure, size_t *data_length, uint8_t cmd_type) {
     if (structure == NULL || data_length == NULL) {
         ESP_LOGE(TAG, "Invalid input: structure or data_length is NULL");
@@ -70,7 +70,7 @@ uint8_t* camera_mode_switch_creator(const void *structure, size_t *data_length, 
     uint8_t *data = NULL;
 
     // Check if it's a command frame
-    // 判断是否为命令帧
+    // Check whether this is a command frame
     if ((cmd_type & 0x20) == 0) {
         const camera_mode_switch_command_frame_t *command_frame = 
             (const camera_mode_switch_command_frame_t *)structure;
@@ -89,7 +89,7 @@ uint8_t* camera_mode_switch_creator(const void *structure, size_t *data_length, 
         
         memcpy(data, command_frame, *data_length);
     } else {
-        // 暂不支持此功能的应答帧创建
+        // Acknowledgement frame creation is not supported for this operation
         // Response frame creation for this functionality is not yet supported.
         ESP_LOGE(TAG, "Response frames are not supported in camera_mode_switch_creator");
         return NULL;
@@ -107,7 +107,7 @@ int camera_mode_switch_parser(const uint8_t *data, size_t data_length, void *str
     ESP_LOGI(TAG, "Parsing Camera Mode Switch data, received data length: %zu", data_length);
 
     if ((cmd_type & 0x20) == 0) {
-        // 暂不支持此功能的命令帧解析
+        // Command frame parsing is not supported for this operation
         // Command frame parsing for this functionality is not yet supported.
         ESP_LOGE(TAG, "camera_mode_switch_parser: Only response frames are supported");
         return -1;
@@ -144,7 +144,7 @@ int version_query_parser(const uint8_t *data, size_t data_length, void *structur
     }
 
     // ack_result(2 bytes) + product_id(16 bytes)
-    // ack_result(2字节) + product_id(16字节)
+    // ack_result (2 bytes) + product_id (16 bytes)
     size_t fixed_length = sizeof(uint16_t) + 16;
     if (data_length < fixed_length) {
         ESP_LOGE(TAG, "version_query_parser: Data length too short for response frame. Expected at least: %zu, Got: %zu",
@@ -153,20 +153,20 @@ int version_query_parser(const uint8_t *data, size_t data_length, void *structur
     }
 
     // Calculate flexible array part length
-    // 计算灵活数组部分长度
+    // Calculate the flexible array length
     size_t sdk_version_length = data_length - fixed_length;
 
     // Ensure structure_out has enough space
-    // 确保传入的 structure_out 有足够空间
+    // Ensure structure_out has enough space
     version_query_response_frame_t *output_response = (version_query_response_frame_t *)structure_out;
 
     // Fill fixed part
-    // 填充固定部分
+    // Fill the fixed fields
     output_response->ack_result = *(const uint16_t *)data;
     memcpy(output_response->product_id, data + sizeof(uint16_t), 16);
 
     // Fill flexible array part
-    // 填充灵活数组部分
+    // Fill the flexible array
     memcpy(output_response->sdk_version, data + fixed_length, sdk_version_length);
 
     ESP_LOGI(TAG, "Version Query Response parsed successfully. ack_result: %u, product_id: %s, sdk_version: %.*s",

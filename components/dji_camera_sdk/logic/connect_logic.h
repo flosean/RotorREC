@@ -27,7 +27,7 @@ typedef enum {
     BLE_CONNECTED = 2,
     PROTOCOL_CONNECTED = 3,
     BLE_DISCONNECTING = 4,   // Actively disconnecting state
-                             // 主动断开连接中状态
+                             // Intentional disconnection in progress
 } connect_state_t;
 
 connect_state_t connect_logic_get_state(void);

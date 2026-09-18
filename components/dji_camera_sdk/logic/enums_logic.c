@@ -22,60 +22,60 @@
 const char* camera_mode_to_string(camera_mode_t mode) {
     switch (mode) {
         case CAMERA_MODE_SLOW_MOTION:
-            return "慢动作 / Slow Motion";
+            return "Slow Motion";
         case CAMERA_MODE_NORMAL:
-            return "视频 / Video";
+            return "Video";
         case CAMERA_MODE_TIMELAPSE:
-            return "静止延时 / Timelapse";
+            return "Timelapse";
         case CAMERA_MODE_PHOTO:
-            return "拍照 / Photo";
+            return "Photo";
         case CAMERA_MODE_HYPERLAPSE:
-            return "运动延时 / Hyperlapse";
+            return "Hyperlapse";
         case CAMERA_MODE_LIVE_STREAMING:
-            return "直播 / Live Streaming";
+            return "Live Streaming";
         case CAMERA_MODE_UVC_STREAMING:
-            return "UVC 直播 / UVC Live Streaming";
+            return "UVC Live Streaming";
         case CAMERA_MODE_SUPERNIGHT:
-            return "低光视频（超级夜景）/ SuperNight";
+            return "SuperNight";
         case CAMERA_MODE_SUBJECT_TRACKING:
-            return "人物跟随 / Subject Tracking";
+            return "Subject Tracking";
 
         case CAMERA_MODE_PANORAMIC_VIDEO_360:
-            return "全景视频 / Panoramic Video (Osmo360)";
+            return "Panoramic Video (Osmo360)";
         case CAMERA_MODE_HYPERLAPSE_360:
-            return "运动延时 / Hyperlapse (Osmo360)";
+            return "Hyperlapse (Osmo360)";
         case CAMERA_MODE_SELFIE_360:
-            return "自拍模式 / Selfie Mode (Osmo360)";
+            return "Selfie Mode (Osmo360)";
         case CAMERA_MODE_PANORAMIC_PHOTO_360:
-            return "全景拍照 / Panoramic Photo (Osmo360)";
+            return "Panoramic Photo (Osmo360)";
         case CAMERA_MODE_BOOST_VIDEO_360:
-            return "极广角视频 / Boost Video (Osmo360)";
+            return "Boost Video (Osmo360)";
         case CAMERA_MODE_VORTEX_360:
-            return "时空凝固 / Vortex (Osmo360)";
+            return "Vortex (Osmo360)";
         case CAMERA_MODE_PANORAMIC_SUPERNIGHT_360:
-            return "全景超级夜景 / 360° SuperNight (Osmo360)";
+            return "360-degree SuperNight (Osmo360)";
         case CAMERA_MODE_SINGLE_LENS_SUPERNIGHT_360:
-            return "单镜头超级夜景 / Single Lens SuperNight (Osmo360)";
+            return "Single Lens SuperNight (Osmo360)";
 
         default:
-            return "未知模式 / Unknown mode";
+            return "Unknown mode";
     }
 }
 
 const char* camera_status_to_string(camera_status_t status) {
     switch (status) {
         case CAMERA_STATUS_SCREEN_OFF:
-            return "屏幕关闭 / Screen off";
+            return "Screen off";
         case CAMERA_STATUS_LIVE_STREAMING:
-            return "直播 / Live streaming (including screen-on without recording)";
+            return "Live streaming (including screen-on without recording)";
         case CAMERA_STATUS_PLAYBACK:
-            return "回放 / Playback";
+            return "Playback";
         case CAMERA_STATUS_PHOTO_OR_RECORDING:
-            return "拍照或录像中 / Photo or recording";
+            return "Photo or recording";
         case CAMERA_STATUS_PRE_RECORDING:
-            return "预录制中 / Pre-recording";
+            return "Pre-recording";
         default:
-            return "未知状态 / Unknown status";
+            return "Unknown status";
     }
 }
 
@@ -89,10 +89,10 @@ const char* video_resolution_to_string(video_resolution_t res) {
         case VIDEO_RESOLUTION_2K_4_3: return "2720x2040P 2.7K 4:3";
         case VIDEO_RESOLUTION_4K_4_3: return "4096x3072P 4K 4:3";
         case VIDEO_RESOLUTION_4K_9_16: return "4096x2160P 4K 9:16";
-        case VIDEO_RESOLUTION_L: return "拍照画幅 L / Ultra Wide 30MP (Osmo360)";
-        case VIDEO_RESOLUTION_M: return "拍照画幅 M / Wide 20MP (Osmo360)";
+        case VIDEO_RESOLUTION_L: return "Ultra Wide 30MP (Osmo360)";
+        case VIDEO_RESOLUTION_M: return "Wide 20MP (Osmo360)";
         case VIDEO_RESOLUTION_S: return "Standard 12MP (Osmo360)";
-        default: return "未知分辨率";
+        default: return "Unknown resolution";
     }
 }
 
@@ -108,17 +108,17 @@ const char* fps_idx_to_string(fps_idx_t fps) {
         case FPS_120: return "120fps";
         case FPS_200: return "200fps";
         case FPS_240: return "240fps";
-        default: return "未知帧率 / Unknown FPS";
+        default: return "Unknown FPS";
     }
 }
 
 const char* eis_mode_to_string(eis_mode_t mode) {
     switch (mode) {
-        case EIS_MODE_OFF: return "关闭 / Off";
+        case EIS_MODE_OFF: return "Off";
         case EIS_MODE_RS: return "RS";
         case EIS_MODE_RS_PLUS: return "RS+";
         case EIS_MODE_HB: return "HB";
         case EIS_MODE_HS: return "HS";
-        default: return "未知防抖模式 / Unknown EIS mode";
+        default: return "Unknown EIS mode";
     }
 }

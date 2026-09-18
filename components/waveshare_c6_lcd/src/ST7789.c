@@ -69,7 +69,7 @@ void BK_Init(void)
     };
     ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
     
-    // 配置LEDC
+    // Configure LEDC
     ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_13_BIT,
         .freq_hz = 5000,
@@ -92,7 +92,7 @@ void BK_Light(uint8_t Light)
     if(Light > 100) Light = 100;
     uint16_t Duty = LEDC_MAX_Duty-(81*(100-Light));
     if(Light == 0) Duty = 0;
-    // 设置PWM占空比
+    // Set the PWM duty cycle
     ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, Duty);
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }

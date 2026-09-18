@@ -1,40 +1,40 @@
 # ESP32-C3-Zero
 
-RotorREC 1.0.0 的無螢幕板型，使用 Waveshare ESP32-C3-Zero（C3FH4、4 MB Flash）。與 C6 共用相機、Betaflight 與控制政策；不編入 LCD／LVGL。
+The headless RotorREC board uses the Waveshare ESP32-C3-Zero (C3FH4, 4 MB flash). It shares camera and Betaflight logic with C6 and does not compile LCD or LVGL dependencies.
 
-## 操作
+## Controls
 
-- BOOT（GPIO9）短按：就緒時切換錄影。
-- BOOT 長按 1.2 秒：重新搜尋／配對。
-- RESET：重啟模組。
-- USB 日誌：顯示連線、電量與 R SDK 配對碼。
-- GPIO10 RGB：依相機實際狀態顯示燈號。
+- Short-press BOOT (GPIO9): toggle recording when ready.
+- Hold BOOT for 1.2 seconds: scan and pair again.
+- RESET: restart the module.
+- USB logs: connection status, battery level, and R SDK pairing code.
+- GPIO10 RGB: indication based on actual camera status.
 
-| 燈號 | 意義 |
+| Indicator | Meaning |
 | --- | --- |
-| 綠恆亮 | 已連線，已確認待機 |
-| 綠慢閃 | 實際錄影中 |
-| 紅慢閃 | 未連線、搜尋失敗或配對遭拒 |
-| 紅快閃 | 搜尋、配對或重連中 |
-| 黃快閃 | 等待有效狀態、指令確認或儲存中 |
+| Steady green | Connected with confirmed standby status |
+| Slow green blink | Camera reports recording |
+| Slow red blink | Disconnected, scan failed, or pairing rejected |
+| Fast red blink | Scanning, pairing, or reconnecting |
+| Fast yellow blink | Waiting for valid status, command confirmation, or camera storage |
 
-慢閃為亮 1 秒、滅 1 秒；快閃為亮 0.2 秒、滅 0.2 秒。本板使用 RGB 序列順序，修正後燈色仍待肉眼驗收，不代表所有 WS2812 板型均使用相同順序。
+Slow blinking is 1 second on and 1 second off; fast blinking is 0.2 seconds on and 0.2 seconds off. This board uses RGB byte order. Visual verification of the color correction remains open; other WS2812 boards may use a different order.
 
-## 接線
+## Wiring
 
-| C3-Zero | 接飛控 |
+| C3-Zero | Flight controller |
 | --- | --- |
-| GP0（UART1 TX） | 空閒 MSP UART RX |
-| GP1（UART1 RX） | 同一 MSP UART TX |
+| GP0 (UART1 TX) | RX on an unused MSP UART |
+| GP1 (UART1 RX) | TX on the same MSP UART |
 | GND | GND |
 
-115200 baud、8N1、3.3 V 邏輯、不反相。GP0／GP1 是 GPIO 編號，勿混淆排針序號。預設不使用 UART0 GP21／GP20，避免開機日誌混入 MSP；也不能沿用 C6 GPIO18／19，因為 C3 使用這兩腳作 USB。
+Use 115200 baud, 8N1, non-inverted 3.3 V logic. GP0 and GP1 are GPIO identifiers, not physical pin numbers. UART0 GP21/GP20 is not used by default to keep boot messages out of MSP traffic. Do not reuse C6 GPIO18/19 wiring: these pins provide USB on C3.
 
-首次由 USB 供電，勿將電池電壓或 5 V 接到 GPIO。GPIO2／8／9 涉及啟動，GPIO10 接 LED，GPIO12～17 接 Flash，程式禁止將它們設定成 BF 串口腳位。
+Initially power the board over USB. Never connect battery voltage or 5 V to GPIO pins. GPIO2/8/9 are boot-related, GPIO10 drives the LED, and GPIO12-17 serve flash; the firmware rejects these pins for the Betaflight UART.
 
-## 建置與燒錄
+## Build and flash
 
-先開啟 ESP-IDF PowerShell 終端機：
+Open an ESP-IDF PowerShell terminal:
 
 ```powershell
 .\tools\c3-zero.ps1 -IdfArguments @('build')
@@ -42,18 +42,18 @@ RotorREC 1.0.0 的無螢幕板型，使用 Waveshare ESP32-C3-Zero（C3FH4、4 M
 .\tools\c3-zero.ps1 -IdfArguments @('-p','COMxx','flash','monitor')
 ```
 
-將 COMxx 換成實際埠。wrapper 使用 `build-c3-zero/`、該目錄的 sdkconfig 與 `config/sdkconfig.c3-zero.defaults`，不改 C6 設定。應用映像為 `build-c3-zero/rotorrec.bin`；透過 flash 指令一起寫入 bootloader 和 partition table。
+Replace COMxx with the actual port. The wrapper uses `build-c3-zero/`, its own sdkconfig, and `config/sdkconfig.c3-zero.defaults`. It does not change C6 settings. The application image is `build-c3-zero/rotorrec.bin`; the flash command also writes the bootloader and partition table.
 
-其他系統可使用 [建置文件](build-and-flash.md) 的 idf.py 指令。請勿把 C6 映像燒入 C3。若不能自動下載，按住 BOOT，按一下 RESET 再放開 BOOT；下載模式的埠號可能改變。退出 monitor 使用 Ctrl+]。
+Other systems can use the idf.py commands in [building and flashing](build-and-flash.md). Do not flash C6 images onto C3. If automatic download fails, hold BOOT, press RESET, and release BOOT. The serial port may change in download mode. Exit monitoring with Ctrl+].
 
-## 首次配對與驗收
+## First pairing and checks
 
-1. 先只插 USB，確認日誌顯示 C3 板型與 UART TX0／RX1。
-2. 關閉其他相機遙控器，將相機放近模組並開機。
-3. 首次搜尋先嘗試公開 R SDK 再轉 Action 2；如相機出現確認提示，在相機接受。搜尋失敗可長按 BOOT 重試。
-4. 確認相機藍牙標示、實際錄影切換與電量，再測雙方各自重啟、超距離恢復。
-5. 拆槳接飛控，依 [Betaflight 設定](betaflight-setup.md) 驗證 USER1 與 OSD。
+1. Connect USB and confirm the log identifies the C3 board and UART TX0/RX1.
+2. Turn off other camera remotes and turn on the camera near the module.
+3. Initial discovery tries the public R SDK before the Action 2 path. Accept any confirmation shown on the camera. Hold BOOT to retry a failed scan.
+4. Check the Bluetooth icon, actual recording control, and battery level. Then test independent restarts and out-of-range recovery.
+5. Remove propellers before connecting the flight controller and follow [Betaflight setup](betaflight-setup.md).
 
-C3 已有 Action 2 待機／電量回報與燒錄證據；完整操作、RGB 與 BF 驗收狀態見 [驗證狀態](verification-status.md)。
+Action 2 standby and battery reception have been verified on C3. Betaflight UART and OSD have also been confirmed working on real hardware by the project owner. See [verification status](verification-status.md) for remaining operational and RGB checks.
 
-硬體來源：[Waveshare C3-Zero 文件](https://docs.waveshare.com/ESP32-C3-Zero)。
+Hardware reference: [Waveshare C3-Zero documentation](https://docs.waveshare.com/ESP32-C3-Zero).

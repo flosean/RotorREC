@@ -1,16 +1,22 @@
 # Changelog
 
-## 1.0.0 — 2026-09-18
+## Unreleased
 
-首次以 RotorREC 名稱發布現行原始碼。
+- Translate all tracked documentation, source comments, and remaining localized diagnostic and camera mode strings into English.
+- Record the project owner's confirmation that Betaflight UART communication and OSD functionality have been tested on real hardware and work correctly.
+- Keep firmware version 1.0.0; this update changes documentation and displayed text, not control behavior.
 
-- ESP32-C3-Zero 與 ESP32-C6-LCD-1.47 分開建置，共用相機與 Betaflight 邏輯。
-- DJI Action 2 legacy BLE/DUML 及 DJI 公開 R SDK 協議路徑。
-- 配對、保存目標、重連、錄影控制與相機狀態回報。
-- Betaflight MSPv2、USER1～USER4 控制、兩行 OSD 與失聯控制政策。
-- LCD、BOOT 按鍵、C3 RGB 指示燈與 USB 狀態日誌。
-- 主機測試、板型預設配置、使用與架構文件。
-- `version.txt` 定義韌體版本 1.0.0，輸出名稱改為 `rotorrec.bin`。
-- 排除建置快取、封包、歷史快照、下載參考資料與未完成 PCB 草稿。
+## 1.0.0 - 2026-09-18
 
-已知限制：Betaflight UART／OSD 尚待端到端實機驗收；Action 4 模組化回歸、重連壓力測試及 C3 LED 肉眼驗收尚未完成；GoPro 尚未實作。完整說明見 [驗證狀態](docs/verification-status.md)。
+Initial source release under the RotorREC name.
+
+- Separate ESP32-C3-Zero and ESP32-C6-LCD-1.47 builds sharing camera and Betaflight logic.
+- DJI Action 2 legacy BLE/DUML and DJI public R SDK protocol paths.
+- Pairing, saved camera profiles, reconnection, recording control, and camera status reporting.
+- Betaflight MSPv2, USER1-USER4 control, two OSD lines, and loss-of-link control policy.
+- LCD, BOOT button, C3 RGB indicator, and USB status logs.
+- Host tests, board defaults, and setup and architecture documentation.
+- Firmware version 1.0.0 from `version.txt`; application output named `rotorrec.bin`.
+- Exclude build caches, captures, historical snapshots, downloaded references, and unfinished PCB drafts.
+
+Remaining checks include Action 4 regression, repeated reconnection stress tests, and visual confirmation of the revised C3 LED colors. GoPro is not implemented. The project owner subsequently confirmed successful Betaflight UART and OSD hardware testing; see [verification status](docs/verification-status.md).

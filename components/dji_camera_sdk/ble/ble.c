@@ -32,23 +32,23 @@
 #define TAG "BLE"
 
 /* Target device name */
-/* 目标设备名称 */
+/* Target device name */
 static char s_remote_device_name[ESP_BLE_ADV_NAME_LEN_MAX] = {0};
 
 /* Flags indicating whether a connection has been initiated and whether the target service has been found, for demonstration only */
-/* 是否已发起连接、是否已找到目标服务等标记，仅作演示 */
+/* Demo flags for connection attempts and service discovery */
 static volatile bool s_connecting = false;
 
 /* Globally saved Notify callback */
-/* 全局保存的 Notify 回调 */
+/* Global notification callback */
 static ble_notify_callback_t s_notify_cb = NULL;
 
 /* Set logic layer disconnection state callback */
-/* 设置逻辑层断开连接状态回调 */
+/* Logic-layer disconnection callback */
 static connect_logic_state_callback_t s_state_cb = NULL;
 
 /* Attempt to connect when the target device is scanned */
-/* 扫描到目标设备，尝试连接 */
+/* Connect when the target device is found */
 #define MIN_RSSI_THRESHOLD -80          // Set minimum signal strength threshold, adjust as needed
 static esp_bd_addr_t best_addr = {0};   // Store the address of the device with the strongest signal
 static esp_ble_addr_type_t best_addr_type = BLE_ADDR_TYPE_PUBLIC;
@@ -61,12 +61,12 @@ static ble_diagnostics_t s_diagnostics = {
 };
 
 /* Only one profile is stored */
-/* 仅存一个 profile */
+/* Store a single profile */
 ble_profile_t s_ble_profile = {
     .conn_id = 0,
     .gattc_if = ESP_GATT_IF_NONE,
     .remote_bda = {0x60, 0x60, 0x1F, 0x60, 0x11, 0xE7},  // Temporarily store the MAC address of the last connected device; you can initialize it with a test value for debugging purposes.
-                                                         // 此处暂存上次连接设备的 MAC 地址，可以初始化一个值进行测试
+                                                         // Store the last connected MAC address; a test address may be assigned here
     .notify_char_handle = 0,
     .write_char_handle = 0,
     .read_char_handle = 0,
@@ -82,7 +82,7 @@ ble_profile_t s_ble_profile = {
 };
 
 /* Define the Service/Characteristic UUIDs to filter, for search use */
-/* 这里定义想要过滤的 Service/Characteristic UUID，供搜索使用 */
+/* Service and characteristic UUID filters used during discovery */
 #define REMOTE_TARGET_SERVICE_UUID   0xFFF0
 #define REMOTE_LEGACY_CHAR_UUID      0xFFF3
 #define REMOTE_NOTIFY_CHAR_UUID      0xFFF4
@@ -109,7 +109,7 @@ static esp_bt_uuid_t s_notify_descr_uuid = {
 };
 
 /* Scan parameters, adjustable as needed */
-/* 扫描参数，可根据需求调整 */
+/* Adjustable scan parameters */
 static esp_ble_scan_params_t s_ble_scan_params = {
     .scan_type          = BLE_SCAN_TYPE_ACTIVE,
     .own_addr_type      = BLE_ADDR_TYPE_PUBLIC,
@@ -180,7 +180,7 @@ static void dump_gatt_database(esp_gatt_if_t gattc_if, uint16_t conn_id)
 }
 
 /* Callback function declarations */
-/* 回调函数声明 */
+/* Callback declarations */
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
 static void gattc_event_handler(esp_gattc_cb_event_t event,
                                 esp_gatt_if_t gattc_if,
@@ -231,12 +231,12 @@ static esp_err_t trigger_scan_task(void) {
 
 /* -------------------------
  *  Initialization/Scan/Connection related interfaces
- *  初始化/扫描/连接相关接口
+ *  Initialization, scanning, and connection interfaces
  * ------------------------- */
 
 /**
  * @brief BLE client initialization
- * BLE 客户端初始化
+ * Initialize the BLE client
  *
  * @return esp_err_t
  *         - ESP_OK on success
@@ -244,7 +244,7 @@ static esp_err_t trigger_scan_task(void) {
  */
 esp_err_t ble_init() {
     /* Initialize NVS */
-    /* 初始化 NVS */
+    /* Initialize NVS */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -253,11 +253,11 @@ esp_err_t ble_init() {
     ESP_ERROR_CHECK(ret);
 
     /* Release classic Bluetooth memory */
-    /* 释放经典蓝牙内存 */
+    /* Release Classic Bluetooth memory */
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
     /* Configure and initialize the Bluetooth controller */
-    /* 配置并初始化蓝牙控制器 */
+    /* Configure and initialize the Bluetooth controller */
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
     if (ret) {
@@ -266,7 +266,7 @@ esp_err_t ble_init() {
     }
 
     /* Start the BLE controller */
-    /* 启动 BLE 控制器 */
+    /* Start the BLE controller */
     ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
     if (ret) {
         ESP_LOGE(TAG, "enable controller failed: %s", esp_err_to_name(ret));
@@ -274,7 +274,7 @@ esp_err_t ble_init() {
     }
 
     /* Initialize the Bluedroid stack */
-    /* 初始化 Bluedroid 堆栈 */
+    /* Initialize the Bluedroid stack */
     ret = esp_bluedroid_init();
     if (ret) {
         ESP_LOGE(TAG, "init bluedroid failed: %s", esp_err_to_name(ret));
@@ -282,7 +282,7 @@ esp_err_t ble_init() {
     }
 
     /* Enable Bluedroid */
-    /* 启用 Bluedroid */
+    /* Enable Bluedroid */
     ret = esp_bluedroid_enable();
     if (ret) {
         ESP_LOGE(TAG, "enable bluedroid failed: %s", esp_err_to_name(ret));
@@ -290,7 +290,7 @@ esp_err_t ble_init() {
     }
 
     /* Register GAP callback */
-    /* 注册 GAP 回调 */
+    /* Register the GAP callback */
     ret = esp_ble_gap_register_callback(gap_event_handler);
     if (ret) {
         ESP_LOGE(TAG, "gap register error, err code = %x", ret);
@@ -298,7 +298,7 @@ esp_err_t ble_init() {
     }
 
     /* Register GATTC callback */
-    /* 注册 GATTC 回调 */
+    /* Register the GATTC callback */
     ret = esp_ble_gattc_register_callback(gattc_event_handler);
     if (ret) {
         ESP_LOGE(TAG, "gattc register error, err code = %x", ret);
@@ -306,7 +306,7 @@ esp_err_t ble_init() {
     }
 
     /* Register GATTC application (only one profile here, app_id = 0) */
-    /* 注册 GATTC 应用（此处只有一个 profile，app_id = 0） */
+    /* Register the GATTC application (one profile, app_id = 0) */
     ret = esp_ble_gattc_app_register(0);
     if (ret) {
         ESP_LOGE(TAG, "gattc app register error, err code = %x", ret);
@@ -314,7 +314,7 @@ esp_err_t ble_init() {
     }
 
     /* Set local MTU (optional) */
-    /* 设置本地 MTU（可选） */
+    /* Set the local MTU (optional) */
     esp_ble_gatt_set_local_mtu(500);
 
     ESP_LOGI(TAG, "ble_init success!");
@@ -323,21 +323,21 @@ esp_err_t ble_init() {
 
 /**
  * @brief Connect to a device with a specified name (if already scanning, it will automatically connect when the device is found)
- * 连接到指定名称的设备（若已在扫描中，会自动在扫描到该设备时连接）
+ * Connect to a named device; an active scan connects when the device is found
  *
  * @note  This interface is for demonstration only. If you want to actively specify an address to connect, you can extend the interface yourself.
- *        本接口仅作为演示，如果想主动指定地址连接，可自行扩展接口
+ *        This demo interface can be extended to connect to a specific address
  * @return esp_err_t
  */
 esp_err_t ble_start_scanning_and_connect(void) {
     // TODO: Add reconnection logic; current implementation has issues and needs to be fixed.
-    // 补充重连逻辑，当前实现存在问题，待修复
+    // TODO: Complete the reconnection logic; the current implementation needs repair
     if(ble_get_reconnecting()) {
         return ble_reconnect();
     }
 
     // Reset scan-related variables
-    // 重置扫描相关变量
+    // Reset scan state
     memset(best_addr, 0, sizeof(esp_bd_addr_t));
     best_addr_type = BLE_ADDR_TYPE_PUBLIC;
     best_rssi = -128;
@@ -346,7 +346,7 @@ esp_err_t ble_start_scanning_and_connect(void) {
     s_found_previous_device = false;
 
     // Set scan parameters
-    // 设置扫描参数
+    // Set scan parameters
     esp_err_t ret = esp_ble_gap_set_scan_params(&s_ble_scan_params);
     if (ret) {
         ESP_LOGE(TAG, "Set scan params error: %s", esp_err_to_name(ret));
@@ -358,14 +358,14 @@ esp_err_t ble_start_scanning_and_connect(void) {
 
 static void try_to_connect(esp_bd_addr_t addr) {
     // Check if already connecting
-    // 检查是否正在连接中
+    // Check whether a connection attempt is in progress
     if (s_connecting) {
         ESP_LOGW(TAG, "Already in connecting state, please wait...");
         return;
     }
 
     // Check if the address is the initial value (all zeros)
-    // 检查地址是否为初始值（全0）
+    // Check whether the address is still all zeros
     bool is_valid = false;
     for (int i = 0; i < ESP_BD_ADDR_LEN; i++) {
         if (addr[i] != 0) {
@@ -386,7 +386,7 @@ static void try_to_connect(esp_bd_addr_t addr) {
              addr[3], addr[4], addr[5]);
 
     // Do not call lightly, if you connect to a non-existent device address, you will have to wait a while before you can connect again
-    // 不要轻易调用，如果连接不存在的设备地址会等待一段时间后才能再次连接
+    // Use with care: connecting to an absent device delays subsequent connection attempts
     ESP_LOGI(TAG, "ACTION2_DIAG connect address_type=%u", best_addr_type);
     esp_err_t open_result = esp_ble_gattc_open(s_ble_profile.gattc_if,
                        addr,
@@ -415,15 +415,15 @@ void ble_set_reconnect_target(const uint8_t address[ESP_BD_ADDR_LEN], uint8_t ad
 
 /**
  * @brief Reconnect to the last connected device
- * 重新连接到上一次连接的设备
+ * Reconnect to the last connected device
  * 
  * @note Only applicable to non-active disconnection situations, as device information is not cleared
- *       仅适用于非主动断开连接的情况，因为设备信息未被清除
+ *       Applies to unexpected disconnections, where device information is retained
  * @return esp_err_t
  */
 esp_err_t ble_reconnect(void) {
     // Check if there is a valid last connection address
-    // 检查是否有有效的上一次连接地址
+    // Check for a valid previous device address
     bool is_valid = false;
     for (int i = 0; i < ESP_BD_ADDR_LEN; i++) {
         if (best_addr[i] != 0) {
@@ -443,12 +443,12 @@ esp_err_t ble_reconnect(void) {
              best_addr[3], best_addr[4], best_addr[5]);
 
     // Set reconnection mode flag
-    // 设置重连模式标记
+    // Enable reconnection mode
     s_is_reconnecting = true;
     s_found_previous_device = false;  // Reset discovery flag
     
     // Start scan task
-    // 开始扫描任务
+    // Start the scan task
     return trigger_scan_task();
 }
 
@@ -479,7 +479,7 @@ esp_err_t ble_cancel_pending_connect(void) {
 
 /**
  * @brief Disconnect (if connected)
- * 断开连接（如果已经连接）
+ * Disconnect if connected
  *
  * @return esp_err_t
  */
@@ -492,16 +492,16 @@ esp_err_t ble_disconnect(void) {
 
 /* -------------------------
  *  Read/Write and Notify related interfaces
- *  读写与 Notify 相关接口
+ *  Read, write, and notification interfaces
  * ------------------------- */
 /**
  * @brief Read a specified characteristic
- * 读取指定特征
+ * Read the specified characteristic
  *
  * @param conn_id  Connection ID (obtained from callback events or internal management)
- *                 连接 ID（由回调事件或内部管理获得）
+ *                 Connection ID obtained from callbacks or internal state
  * @param handle   Handle of the characteristic
- *                 特征的 handle
+ *                 Characteristic handle
  * @return esp_err_t
  */
 esp_err_t ble_read(uint16_t conn_id, uint16_t handle) {
@@ -510,7 +510,7 @@ esp_err_t ble_read(uint16_t conn_id, uint16_t handle) {
         return ESP_FAIL;
     }
     /* Initiate GATTC read request */
-    /* 发起 GATTC 读请求 */
+    /* Issue a GATTC read request */
     esp_err_t ret = esp_ble_gattc_read_char(s_ble_profile.gattc_if,
                                             conn_id,
                                             handle,
@@ -523,16 +523,16 @@ esp_err_t ble_read(uint16_t conn_id, uint16_t handle) {
 
 /**
  * @brief Write characteristic (Write Without Response)
- * 写特征（Write Without Response）
+ * Write a characteristic without response
  *
  * @param conn_id   Connection ID
- *                  连接 ID
+ *                  Connection ID
  * @param handle    Handle of the characteristic
- *                  特征 handle
+ *                  Characteristic handle
  * @param data      Data to be written
- *                  要写入的数据
+ *                  Data to write
  * @param length    Length of the data
- *                  数据长度
+ *                  Data length
  * @return esp_err_t
  */
 esp_err_t ble_write_without_response(uint16_t conn_id, uint16_t handle, const uint8_t *data, size_t length) {
@@ -555,16 +555,16 @@ esp_err_t ble_write_without_response(uint16_t conn_id, uint16_t handle, const ui
 
 /**
  * @brief Write characteristic (Write With Response)
- * 写特征（Write With Response）
+ * Write a characteristic with response
  *
  * @param conn_id   Connection ID
- *                  连接 ID
+ *                  Connection ID
  * @param handle    Handle of the characteristic
- *                  特征 handle
+ *                  Characteristic handle
  * @param data      Data to be written
- *                  要写入的数据
+ *                  Data to write
  * @param length    Length of the data
- *                  数据长度
+ *                  Data length
  * @return esp_err_t
  */
 esp_err_t ble_write_with_response(uint16_t conn_id, uint16_t handle, const uint8_t *data, size_t length) {
@@ -587,12 +587,12 @@ esp_err_t ble_write_with_response(uint16_t conn_id, uint16_t handle, const uint8
 
 /**
  * @brief Register (enable) Notify
- * 注册（开启）Notify
+ * Register for notifications
  *
  * @param conn_id   Connection ID
- *                  连接 ID
+ *                  Connection ID
  * @param char_handle Handle of the characteristic to enable notification
- *                    需要开启通知的特征 handle
+ *                    Handle of the characteristic to enable notifications on
  * @return esp_err_t
  */
 esp_err_t ble_register_notify(uint16_t conn_id, uint16_t char_handle) {
@@ -601,7 +601,7 @@ esp_err_t ble_register_notify(uint16_t conn_id, uint16_t char_handle) {
         return ESP_FAIL;
     }
     /* Request to subscribe to notifications from the protocol stack */
-    /* 向协议栈请求订阅通知 */
+    /* Ask the stack to subscribe to notifications */
     esp_err_t ret = esp_ble_gattc_register_for_notify(s_ble_profile.gattc_if,
                                                       s_ble_profile.remote_bda,
                                                       char_handle);
@@ -613,34 +613,34 @@ esp_err_t ble_register_notify(uint16_t conn_id, uint16_t char_handle) {
 
 /**
  * @brief Unregister (disable) Notify
- * 反注册（关闭）Notify
+ * Unregister notifications
  *
  * @note  This is just a demonstration logic. You need the Client Config descriptor handle of the characteristic to operate.
  *        If needed in actual development, you can directly save the descr handle previously, and then close it by writing 0x0000 here.
- *        此处仅示例逻辑，需要特征的 Client Config 描述符 handle 来进行操作
- *        若实际开发需要，也可直接先前保存 descr handle，然后在此进行关闭写 0x0000
+ *        This example requires the characteristic's client configuration descriptor handle
+ *        Alternatively, retain the descriptor handle and write 0x0000 here to disable notifications
  *
  * @param conn_id   Connection ID
- *                  连接 ID
+ *                  Connection ID
  * @param char_handle Handle of the characteristic to disable notification
- *                    需要关闭通知的特征 handle
+ *                    Handle of the characteristic to disable notifications on
  * @return esp_err_t
  */
 esp_err_t ble_unregister_notify(uint16_t conn_id, uint16_t char_handle) {
     /* In fact, you need to get the corresponding descriptor handle and then write 0x0000 to disable it */
-    /* 实际上需要获取到对应的描述符 handle，然后写 0x0000 进行关闭 */
+    /* Obtain the corresponding descriptor handle and write 0x0000 to disable notifications */
     /* This is just a demonstration of the process. If needed, you can save the descr handle during register_notify */
-    /* 这里只是演示一下流程，需要时可在 register_notify 时保存 descr handle */
+    /* This demonstrates the flow; retain the descriptor handle in register_notify if needed */
     ESP_LOGI(TAG, "ble_unregister_notify called (demo), not fully implemented");
     return ESP_OK;
 }
 
 /**
  * @brief Set global Notify callback (for receiving data)
- * 设置全局的 Notify 回调（用于接收数据）
+ * Set the global callback for received notifications
  *
  * @param cb Callback function pointer
- *           回调函数指针
+ *           Callback function pointer
  */
 void ble_set_notify_callback(ble_notify_callback_t cb) {
     s_notify_cb = cb;
@@ -648,10 +648,10 @@ void ble_set_notify_callback(ble_notify_callback_t cb) {
 
 /**
  * @brief Set global logic layer disconnection state callback
- * 设置全局的逻辑层断连状态回调
+ * Set the global logic-layer disconnection callback
  *
  * @param cb Callback function pointer
- *           回调函数指针
+ *           Callback function pointer
  */
 void ble_set_state_callback(connect_logic_state_callback_t cb) {
     s_state_cb = cb;
@@ -665,10 +665,10 @@ void ble_get_diagnostics(ble_diagnostics_t *diagnostics) {
 
 /* ----------------------------------------------------------------
  *   GAP & GATTC callback function implementation (simplified version)
- *   GAP & GATTC 回调函数实现（精简版）
+ *   GAP and GATTC callback implementations (simplified)
  * ---------------------------------------------------------------- */
 
-/* 判断是否为 DJI 相机的广播 */
+/* Determine whether this is a DJI camera advertisement */
 /* Determine whether it is a DJI camera advertisement */
 static uint8_t bsp_link_is_dji_camera_adv(esp_ble_gap_cb_param_t *scan_result) {
     const uint8_t *ble_adv = scan_result->scan_rst.ble_adv;
@@ -706,7 +706,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         if (scan_timer != NULL) xTimerStop(scan_timer, 0);
         ESP_LOGI(TAG, "scan stopped");
         // After scanning ends, decide whether to connect based on reconnection mode and device discovery status
-        // 扫描结束后，根据重连模式和设备发现状态决定是否连接
+        // After scanning, decide whether to connect based on reconnection mode and discovery results
         if (best_rssi > -128) {
             if (!ble_get_reconnecting() || (ble_get_reconnecting() && s_found_previous_device)) {
                 try_to_connect(best_addr);
@@ -726,12 +726,12 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         esp_ble_gap_cb_param_t *r = param;
         if (r->scan_rst.search_evt == ESP_GAP_SEARCH_INQ_RES_EVT) {
             // Check if it is a DJI camera advertisement
-            // 检查是否为 DJI 相机广播
+            // Check for a DJI camera advertisement
             if (!bsp_link_is_dji_camera_adv(r)) {
                 break;
             }
             // Get the complete name from the advertisement data
-            // 获取广播数据里的完整名称
+            // Get the complete name from the advertisement
             uint8_t *adv_name = NULL;
             uint8_t adv_name_len = 0;
             adv_name = esp_ble_resolve_adv_data_by_type(r->scan_rst.ble_adv,
@@ -740,7 +740,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                                 &adv_name_len);
 
             // Prepare a safe string pointer for logging
-            // 为打印日志准备安全的字符串指针
+            // Prepare a safe string pointer for logging
             const char *adv_name_str = NULL;
             if (adv_name && adv_name_len > 0) {
                 static char name_buf[64];
@@ -765,10 +765,10 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                                      ESP_LOG_INFO);
 
             // Compare names and record signal strength
-            // 对比名称并记录信号强度
+            // Compare the name and record signal strength
             if (ble_get_reconnecting()) {
                 // In reconnection mode, compare device addresses
-                // 在重连模式下，比对设备地址
+                // Match the device address in reconnection mode
                 if (memcmp(best_addr, r->scan_rst.bda, sizeof(esp_bd_addr_t)) == 0) {
                     s_found_previous_device = true;
                     best_rssi = r->scan_rst.rssi;
@@ -782,7 +782,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                 }
             } else {
                 // In normal scan mode, record the device with the strongest signal
-                // 正常扫描模式，记录信号最强的设备
+                // In normal scan mode, retain the device with the strongest signal
                 if (r->scan_rst.rssi > best_rssi && r->scan_rst.rssi >= MIN_RSSI_THRESHOLD) {
                     best_rssi = r->scan_rst.rssi;
                     best_addr_type = r->scan_rst.ble_addr_type;
@@ -806,7 +806,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
     switch (event) {
     case ESP_GATTC_REG_EVT: {
         // Handle GATT client registration event
-        // 处理 GATT 客户端注册事件
+        // Handle GATT client registration
         if (param->reg.status == ESP_GATT_OK) {
             s_ble_profile.gattc_if = gattc_if;
             ESP_LOGI(TAG, "GATTC register OK, app_id=%d, gattc_if=%d",
@@ -818,7 +818,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
     }
     case ESP_GATTC_CONNECT_EVT: {
         // Handle connection event
-        // 处理连接事件
+        // Handle the connection event
         s_ble_profile.conn_id = param->connect.conn_id;
         s_ble_profile.connection_status.is_connected = true;
         memcpy(s_ble_profile.remote_bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
@@ -838,13 +838,13 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
             param->connect.remote_bda[5]);
 
         // Initiate MTU request
-        // 发起 MTU 请求
+        // Request the MTU
         esp_ble_gattc_send_mtu_req(gattc_if, param->connect.conn_id);
         break;
     }
     case ESP_GATTC_OPEN_EVT: {
         // Handle connection open event
-        // 处理连接打开事件
+        // Handle the connection-open event
         s_connecting = false;
         if (param->open.status != ESP_GATT_OK) {
             ESP_LOGE(TAG, "Open failed, status=%d", param->open.status);
@@ -855,7 +855,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
     }
     case ESP_GATTC_CFG_MTU_EVT: {
         // Handle MTU configuration event
-        // 处理 MTU 配置事件
+        // Handle MTU configuration
         if (param->cfg_mtu.status != ESP_GATT_OK) {
             ESP_LOGE(TAG, "Config MTU Error, status=%d", param->cfg_mtu.status);
         }
@@ -863,13 +863,13 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
         s_diagnostics.mtu = param->cfg_mtu.mtu;
 
         // Start service discovery after MTU configuration
-        // MTU 配置完后开始发现服务
+        // Start service discovery after MTU configuration
         esp_ble_gattc_search_service(gattc_if, param->cfg_mtu.conn_id, NULL);
         break;
     }
     case ESP_GATTC_SEARCH_RES_EVT: {
         // Handle service search result event
-        // 处理服务搜索结果事件
+        // Handle service discovery results
         ++s_diagnostics.service_count;
         if (param->search_res.srvc_id.uuid.len == ESP_UUID_LEN_16) {
             ESP_LOGI(TAG, "ACTION2_DIAG service uuid=0x%04x range=0x%04x-0x%04x",
@@ -894,7 +894,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
     }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
         // Handle service search complete event
-        // 处理服务搜索完成事件
+        // Handle completion of service discovery
         if (param->search_cmpl.status != ESP_GATT_OK) {
             ESP_LOGE(TAG, "Service search failed, status=%d", param->search_cmpl.status);
             break;
@@ -903,7 +903,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
         dump_gatt_database(gattc_if, s_ble_profile.conn_id);
 
         // Get notify characteristic handle
-        // 获取通知特征句柄
+        // Get the notification characteristic handle
         uint16_t count = 1;
         esp_gattc_char_elem_t char_elem_result;
         esp_ble_gattc_get_char_by_uuid(gattc_if,
@@ -936,7 +936,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
         }
 
         // Get write characteristic handle
-        // 获取写特征句柄
+        // Get the write characteristic handle
         count = 1;
         esp_gattc_char_elem_t write_char_elem_result;
         esp_ble_gattc_get_char_by_uuid(gattc_if,
@@ -957,7 +957,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
     }
     case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
         // Handle notification registration event
-        // 处理通知注册事件
+        // Handle notification registration
         if (param->reg_for_notify.status != ESP_GATT_OK) {
             ESP_LOGE(TAG, "Notify register failed, status=%d", param->reg_for_notify.status);
             break;
@@ -965,7 +965,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
         ESP_LOGI(TAG, "Notify register success, handle=0x%x", param->reg_for_notify.handle);
 
         // Find descriptor and write 0x01 to enable notification
-        // 找到对应描述符并写入 0x01 使能通知
+        // Find the descriptor and write 0x01 to enable notifications
         uint16_t count = 1;
         esp_gattc_descr_elem_t descr_elem;
         esp_ble_gattc_get_descr_by_char_handle(gattc_if,
@@ -988,7 +988,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
     }
     case ESP_GATTC_NOTIFY_EVT: {
         // Handle notification data event
-        // 处理通知数据事件
+        // Handle notification data
         ++s_diagnostics.notification_count;
         ESP_LOGI(TAG, "ACTION2_DIAG RX notify handle=0x%04x len=%u indication=%u",
                  param->notify.handle, param->notify.value_len, param->notify.is_notify ? 0 : 1);
@@ -1021,7 +1021,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
         break;
     case ESP_GATTC_DISCONNECT_EVT: {
         // Handle disconnection event
-        // 处理断开连接事件
+        // Handle disconnection
         s_ble_profile.connection_status.is_connected = false;
         s_ble_profile.handle_discovery.write_char_handle_found = false;
         s_ble_profile.handle_discovery.notify_char_handle_found = false;
@@ -1039,7 +1039,7 @@ static void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_
 }
 
 // BLE Advertising Data Format
-// 广播数据
+// Advertisement data
 static uint8_t adv_data[] = {
     10, 0xff, 'W','K','P','1','2','3','4','5','6'
 };
@@ -1053,9 +1053,9 @@ static void stop_adv_after_2s(void* arg) {
 
 esp_err_t ble_start_advertising() {
     // Check if remote_bda is initialized
-    // 检查remote_bda是否已初始化
+    // Check whether remote_bda has been initialized
     if (memcmp(s_ble_profile.remote_bda, "\x00\x00\x00\x00\x00\x00", 6) == 0) {
-        ESP_LOGE(TAG, "错误：remote_bda未初始化！");
+        ESP_LOGE(TAG, "Error: remote_bda is not initialized!");
         ESP_LOGE(TAG, "Error: remote_bda not initialized!");
         return ESP_ERR_INVALID_STATE;
     }

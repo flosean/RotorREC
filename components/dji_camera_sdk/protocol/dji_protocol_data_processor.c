@@ -27,14 +27,14 @@
 
 /**
  * @brief Find data descriptor by command set and command ID
- *        根据命令集和命令ID查找对应的数据描述符
+ *        Find the data descriptor for a command set and command ID
  * 
  * @param cmd_set Command set
- *                命令集
+ *                Command set
  * @param cmd_id Command ID
- *               命令ID
+ *               Command ID
  * @return Return pointer to found data descriptor, NULL if not found
- *         返回找到的数据描述符指针，如果未找到则返回NULL
+ *         Matching data descriptor, or NULL if not found
  */
 const data_descriptor_t *find_data_descriptor(uint8_t cmd_set, uint8_t cmd_id) {
     for (size_t i = 0; i < DATA_DESCRIPTORS_COUNT; ++i) {
@@ -47,32 +47,32 @@ const data_descriptor_t *find_data_descriptor(uint8_t cmd_set, uint8_t cmd_id) {
 
 /**
  * @brief Parse data according to structure
- *        根据结构体解析数据
+ *        Parse data into a structure
  * 
  * @param cmd_set Command set
- *                命令集
+ *                Command set
  * @param cmd_id Command ID
- *               命令ID
+ *               Command ID
  * @param cmd_type Command type
- *                 命令类型
+ *                 Command type
  * @param data Data to be parsed
- *             待解析的数据
+ *             Data to parse
  * @param data_length Data length
- *                    数据长度
+ *                    Data length
  * @param structure_out Output structure pointer
- *                      输出结构体指针
+ *                      Output structure pointer
  * @return Return 0 on success, -1 or -2 on failure
- *         成功返回0，失败返回-1或-2
+ *         Return 0 on success, or -1 or -2 on failure
  */
 int data_parser_by_structure(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, const uint8_t *data, size_t data_length, void *structure_out) {
     ESP_LOGI(TAG, "Parsing CmdSet: 0x%02X, CmdID: 0x%02X, CmdType: 0x%02X", cmd_set, cmd_id, cmd_type);
 
     // Find corresponding descriptor
-    // 查找对应的命令描述符
+    // Find the matching command descriptor
     const data_descriptor_t *descriptor = find_data_descriptor(cmd_set, cmd_id);
 
     // Check if parser function exists
-    // 检查解析函数是否存在
+    // Check that a parser is available
     if (descriptor->parser == NULL) {
         ESP_LOGW(TAG, "Parser function is NULL for CmdSet: 0x%02X, CmdID: 0x%02X", cmd_set, cmd_id);
         return -2;
@@ -83,24 +83,24 @@ int data_parser_by_structure(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, 
 
 /**
  * @brief Create data according to structure
- *        根据结构体创建数据
+ *        Create data from a structure
  * 
  * @param cmd_set Command set
- *                命令集
+ *                Command set
  * @param cmd_id Command ID
- *               命令ID
+ *               Command ID
  * @param cmd_type Command type
- *                 命令类型
+ *                 Command type
  * @param structure Input structure pointer
- *                  输入结构体指针
+ *                  Input structure pointer
  * @param data_length Output data length
- *                    输出数据长度
+ *                    Output data length
  * @return Return pointer to created data buffer, NULL on failure
- *         返回创建的数据缓冲区指针，失败返回NULL
+ *         Created data buffer, or NULL on failure
  */
 uint8_t* data_creator_by_structure(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, const void *structure, size_t *data_length) {
     // Find corresponding descriptor
-    // 查找对应的命令描述符
+    // Find the matching command descriptor
     const data_descriptor_t *descriptor = find_data_descriptor(cmd_set, cmd_id);
     if (descriptor == NULL) {
         ESP_LOGW(TAG, "Descriptor not found for CmdSet: 0x%02X, CmdID: 0x%02X", cmd_set, cmd_id);
@@ -108,7 +108,7 @@ uint8_t* data_creator_by_structure(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_
     }
 
     // Check if creator function exists
-    // 检查创建函数是否存在
+    // Check that a creator is available
     if (descriptor->creator == NULL) {
         ESP_LOGW(TAG, "Creator function is NULL for CmdSet: 0x%02X, CmdID: 0x%02X", cmd_set, cmd_id);
         return NULL;

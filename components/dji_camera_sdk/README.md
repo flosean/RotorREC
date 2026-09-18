@@ -1,11 +1,11 @@
 # DJI camera SDK component
 
-來源：DJI Osmo GPS Controller Demo，本機快照日期 2026-08-24。原始授權見 `LICENSE`。
+Source: DJI Osmo GPS Controller Demo, imported on 2026-08-24. Original license notices are preserved in `LICENSE`.
 
-本專案只編入 CRC、protocol、BLE、data，以及 connect/command/status/enums logic。未使用官方範例的 GPS、按鍵、LED 與測試程式。
+The build includes CRC, protocol, BLE, data, and connection/command/status/enum logic. The upstream GPS application, button and LED examples, and test programs are not included in the build.
 
-相對官方範例的本機修改集中在：
+Local changes include:
 
-- `ble/ble.c`、`ble/ble.h`：Action 2 GATT 診斷、FFF3、BLE address type、指定 MAC 重連與 disconnect callback。
-- `data/data.c`：傳輸 frame 診斷 log。
-
+- `ble/ble.c` and `ble/ble.h`: Action 2 GATT diagnostics, FFF3 support, BLE address type handling, reconnection to a specific MAC address, and the disconnect callback.
+- `data/data.c`: frame transmission diagnostics.
+- English translations of comments, diagnostics, and camera mode labels. Original copyright and license notices are retained.

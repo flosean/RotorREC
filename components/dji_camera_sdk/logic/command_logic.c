@@ -43,15 +43,15 @@ uint16_t generate_seq(void) {
 
 /**
  * @brief Send raw bytes directly without protocol frame creation
- *        直接发送原始字节数据，略去协议帧创建环节
+ *        Send raw bytes directly without constructing a protocol frame
  *
  * @param raw_data_string String containing raw bytes in various formats
- *                        包含原始字节的字符串，支持多种格式
+ *                        String containing raw bytes in one of the supported formats
  * @param timeout_ms Timeout for waiting result (in milliseconds)
- *                   等待结果的超时时间（以毫秒为单位）
+ *                   Result timeout in milliseconds
  * 
  * @return esp_err_t ESP_OK on success, error code on failure
- *                   成功返回 ESP_OK，失败返回错误码
+ *                   ESP_OK on success; an error code on failure
  */
 esp_err_t command_logic_send_raw_bytes(const char *raw_data_string, int timeout_ms) {
     if (connect_logic_get_state() <= BLE_INIT_COMPLETE) {
@@ -64,26 +64,26 @@ esp_err_t command_logic_send_raw_bytes(const char *raw_data_string, int timeout_
 
 /**
  * @brief General function for constructing data frames and sending commands
- *        构造数据帧并发送命令的通用函数
+ *        Generic helper to construct a frame and send a command
  *
  * @param cmd_set Command set, used to specify command category
- *                命令集，用于指定命令的类别
+ *                Command set identifying the command category
  * @param cmd_id Command ID, used to identify specific command
- *               命令 ID，用于标识具体命令
+ *               Command ID identifying the operation
  * @param cmd_type Command type, indicates features like response requirement
- *                 命令类型，指示是否需要应答等特性
+ *                 Command type specifying acknowledgement requirements and other flags
  * @param structure Data structure pointer, contains input data for command frame
- *                 数据结构体指针，包含命令帧所需的输入数据
+ *                 Pointer to the input structure used to construct the command frame
  * @param seq Sequence number, used to match request and response
- *            序列号，用于匹配请求与响应
+ *            Sequence number used to match requests and responses
  * @param timeout_ms Timeout for waiting result (in milliseconds)
- *                   等待结果的超时时间（以毫秒为单位）
+ *                   Result timeout in milliseconds
  * 
  * Note: The caller needs to free the dynamically allocated memory after using the returned structure.
- * 注意：调用方需要在使用完返回的结构体后释放动态分配的内存。
+ * The caller must free the dynamically allocated result after use
  * 
  * @return CommandResult Returns parsed structure pointer and data length on success, NULL pointer and length 0 on failure
- *                       成功返回解析后的结构体指针及数据长度，失败返回 NULL 指针及长度 0
+ *                       Parsed structure and length on success; NULL and zero length on failure
  */
 CommandResult send_command(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, const void *input_raw_data, uint16_t seq, int timeout_ms) { 
     CommandResult result = { NULL, 0 };
@@ -96,7 +96,7 @@ CommandResult send_command(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, co
     esp_err_t ret;
 
     // Create protocol frame
-    // 创建协议帧
+    // Create the protocol frame
     size_t frame_length = 0;
     uint8_t *protocol_frame = protocol_create_frame(cmd_set, cmd_id, cmd_type, input_raw_data, seq, &frame_length);
     if (protocol_frame == NULL) {
@@ -107,8 +107,8 @@ CommandResult send_command(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, co
     ESP_LOGI(TAG, "Protocol frame created successfully, length: %zu", frame_length);
 
     // Print ByteArray format for debugging
-    // 打印 ByteArray 格式，便于调试
-    printf("\033[96m");  // 设置青色输出
+    // Print in ByteArray format for debugging
+    printf("\033[96m");  // Select cyan output
     printf("TX: [");
     for (size_t i = 0; i < frame_length; i++) {
         printf("%02X", protocol_frame[i]);
@@ -194,13 +194,13 @@ CommandResult send_command(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, co
 
 /**
  * @brief Switch camera mode
- *        切换相机模式
+ *        Switch camera mode
  *
  * @param mode Camera mode
- *             相机模式
+ *             Camera mode
  * 
  * @return camera_mode_switch_response_frame_t* Returns parsed structure pointer, NULL on error
- *                                              返回解析后的结构体指针，如果发生错误返回 NULL
+ *                                              Parsed structure pointer, or NULL on error
  */
 camera_mode_switch_response_frame_t* command_logic_switch_camera_mode(camera_mode_t mode) {
     ESP_LOGI(TAG, "%s: Switching camera mode to: %d", __FUNCTION__, mode);
@@ -215,7 +215,7 @@ camera_mode_switch_response_frame_t* command_logic_switch_camera_mode(camera_mod
         .device_id = 0xFF330000,
         .mode = mode,
         .reserved = {0x01, 0x47, 0x39, 0x36}  // Reserved field
-                                              // 预留字段
+                                              // Reserved field
     };
 
     ESP_LOGI(TAG, "Constructed command frame: device_id=0x%08X, mode=%d", (unsigned int)command_frame.device_id, command_frame.mode);
@@ -242,17 +242,17 @@ camera_mode_switch_response_frame_t* command_logic_switch_camera_mode(camera_mod
 
 /**
  * @brief Query device version
- *        查询设备版本号
+ *        Query the device version
  *
  * This function sends a query command to get device version information.
- * 该函数通过发送查询命令，获取设备的版本号信息。
+ * Send a query to retrieve the device version information
  * 
  * The returned version information includes acknowledgment result (`ack_result`), 
  * product ID (`product_id`) and SDK version (`sdk_version`).
- * 返回的版本号信息包括应答结果 (`ack_result`)、产品 ID (`product_id`) 和 SDK 版本号 (`sdk_version`)。
+ * The response includes ack_result, product_id, and sdk_version
  *
  * @return version_query_response_frame_t* Returns parsed version info structure, NULL on error
- *                                         返回解析后的版本信息结构体，如果发生错误返回 NULL
+ *                                         Parsed version information, or NULL on error
  */
 version_query_response_frame_t* command_logic_get_version(void) {
     ESP_LOGI(TAG, "%s: Querying device version", __FUNCTION__);
@@ -290,10 +290,10 @@ version_query_response_frame_t* command_logic_get_version(void) {
 
 /**
  * @brief Start recording
- *        开始录制
+ *        Start recording
  *
  * @return record_control_response_frame_t* Returns parsed response structure pointer, NULL on error
- *                                          返回解析后的应答结构体指针，如果发生错误返回 NULL
+ *                                          Parsed acknowledgement structure, or NULL on error
  */
 record_control_response_frame_t* command_logic_start_record(void) {
     ESP_LOGI(TAG, "%s: Starting recording", __FUNCTION__);
@@ -334,10 +334,10 @@ record_control_response_frame_t* command_logic_start_record(void) {
 
 /**
  * @brief Stop recording
- *        停止录制
+ *        Stop recording
  *
  * @return record_control_response_frame_t* Returns parsed response structure pointer, NULL on error
- *                                          返回解析后的应答结构体指针，如果发生错误返回 NULL
+ *                                          Parsed acknowledgement structure, or NULL on error
  */
 record_control_response_frame_t* command_logic_stop_record(void) {
     ESP_LOGI(TAG, "%s: Stopping recording", __FUNCTION__);
@@ -378,19 +378,19 @@ record_control_response_frame_t* command_logic_stop_record(void) {
 
 /**
  * @brief Push GPS data
- *        推送 GPS 数据
+ *        Push GPS data
  *
  * @param gps_data Pointer to structure containing GPS data
- *                 指向包含 GPS 数据的结构体
+ *                 Pointer to the structure containing GPS data
  * 
  * @return gps_data_push_response_frame* Returns parsed response structure pointer, NULL on error
- *                                       返回解析后的应答结构体指针，如果发生错误返回 NULL
+ *                                       Parsed acknowledgement structure, or NULL on error
  */
 gps_data_push_response_frame* command_logic_push_gps_data(const gps_data_push_command_frame *gps_data) {
     ESP_LOGI(TAG, "Pushing GPS data");
 
     // Check connection status
-    // 检查连接状态
+    // Check connection state
     if (connect_logic_get_state() != PROTOCOL_CONNECTED) {
         ESP_LOGE(TAG, "Protocol connection to the camera failed. Current connection state: %d", connect_logic_get_state());
         return NULL;
@@ -404,7 +404,7 @@ gps_data_push_response_frame* command_logic_push_gps_data(const gps_data_push_co
     uint16_t seq = generate_seq();
 
     // Send command and receive response
-    // 发送命令并接收应答
+    // Send the command and receive its acknowledgement
     CommandResult result = send_command(
         0x00,
         0x17,
@@ -415,16 +415,16 @@ gps_data_push_response_frame* command_logic_push_gps_data(const gps_data_push_co
     );
 
     // Return response structure pointer
-    // 返回应答结构体指针
+    // Return the acknowledgement structure
     return (gps_data_push_response_frame *)result.structure;
 }
 
 /**
  * @brief Quick switch mode key report
- *        快速切换模式按键上报
+ *        Report a quick-switch mode button event
  *
  * @return key_report_response_frame_t* Returns parsed response structure pointer, NULL on error
- *                                      返回解析后的应答结构体指针，如果发生错误返回 NULL
+ *                                      Parsed acknowledgement structure, or NULL on error
  */
 key_report_response_frame_t* command_logic_key_report_qs(void) {
     ESP_LOGI(TAG, "%s: Reporting key press for mode switch", __FUNCTION__);
@@ -438,11 +438,11 @@ key_report_response_frame_t* command_logic_key_report_qs(void) {
 
     key_report_command_frame_t command_frame = {
         .key_code = 0x02,          // QS key code for mode switch
-                                   // QS按键码，模式切换
+                                   // QS button code for mode switching
         .mode = 0x01,              // Fixed as 0x01
-                                   // 固定为 0x01
+                                   // Fixed value: 0x01
         .key_value = 0x00,         // Fixed as 0x00, short press event
-                                   // 固定为 0x00，短按事件
+                                   // Fixed value: 0x00, short-press event
     };
 
     CommandResult result = send_command(
@@ -479,11 +479,11 @@ key_report_response_frame_t* command_logic_key_report_snapshot(void) {
 
     key_report_command_frame_t command_frame = {
         .key_code = 0x03,          // Snapshot key code
-                                   // 拍照按键码
+                                   // Photo button code
         .mode = 0x01,              // Fixed as 0x01
-                                   // 固定为 0x01
+                                   // Fixed value: 0x01
         .key_value = 0x00,         // Fixed as 0x00, short press event
-                                   // 固定为 0x00，短按事件
+                                   // Fixed value: 0x00, short-press event
     };
 
     CommandResult result = send_command(
