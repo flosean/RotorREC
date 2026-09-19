@@ -1,0 +1,2 @@
+# Deprecated: RotorREC 1.1 includes GoPro in both board images.
+# Select gopro using tools/rotorrec_manager.py after initial USB installation.

@@ -1,4 +1,5 @@
 #include "bf_bridge.h"
+#include "management/management.h"
 
 #include <string.h>
 #include "sdkconfig.h"
@@ -31,22 +32,35 @@ static bool command_allowed(uint16_t command)
 
 static bool exchange(uint16_t command, const uint8_t *frame, size_t length, msp_v2_reply_t *reply)
 {
-    if (!command_allowed(command) || length == 0) return false;
-    /* Single outstanding request. Discard incomplete/late traffic from previous requests. */
-    uart_flush_input(BF_UART);
+    if (management_active() || !command_allowed(command) || length == 0) return false;
     if (uart_write_bytes(BF_UART, frame, length) != (int)length) return false;
     msp_v2_parser_t parser = {0};
     uint32_t start = now_ms();
     while ((uint32_t)(now_ms() - start) < BF_RESPONSE_MS) {
         uint8_t data[64];
         int count = uart_read_bytes(BF_UART, data, sizeof(data), pdMS_TO_TICKS(10));
+        bool found = false;
         for (int i = 0; i < count; ++i) {
-            if (msp_v2_parser_feed(&parser, data[i], reply) && reply->command == command) {
-                return true;
-            }
+            management_feed(data[i]);
+            if (!found && msp_v2_parser_feed(&parser, data[i], reply) && reply->command == command) found = true;
         }
+        management_tick();
+        if (management_active()) return false;
+        if (found) return true;
     }
     return false;
+}
+
+/* One UART reader for both MSP and management, including disconnected waits. */
+static void service_for(uint32_t duration_ms)
+{
+    uint32_t start = now_ms();
+    do {
+        uint8_t data[128];
+        int count = uart_read_bytes(BF_UART, data, sizeof(data), pdMS_TO_TICKS(10));
+        for (int i = 0; i < count; ++i) management_feed(data[i]);
+        management_tick();
+    } while ((uint32_t)(now_ms() - start) < duration_ms);
 }
 
 static bool query(uint16_t command, msp_v2_reply_t *reply)
@@ -75,18 +89,28 @@ static void bridge_task(void *argument)
 
     for (;;) {
         uint32_t cycle_start = now_ms();
+        if (management_take_control_reset()) {
+            connected = false; map_valid = false; last_input_valid = false;
+            policy = (bf_record_policy_t){0};
+        }
+        if (management_active()) {
+            connected = false; map_valid = false; last_input_valid = false;
+            policy = (bf_record_policy_t){0};
+            service_for(20);
+            continue;
+        }
         if (!connected) {
             policy = (bf_record_policy_t) {0};
             if (!query(MSP_API_VERSION, &reply) || !bf_api_supported(reply.payload, reply.length)) {
                 ESP_LOGW(TAG, "Waiting for MSP API 1.47+ on UART1 (no camera automation)");
-                vTaskDelay(pdMS_TO_TICKS(2000));
+                service_for(2000);
                 continue;
             }
             unsigned api_minor = reply.payload[2];
             if (!query(MSP_FC_VARIANT, &reply) || reply.length != 4 ||
                 memcmp(reply.payload, "BTFL", 4) != 0) {
                 ESP_LOGW(TAG, "FC variant is unavailable or not Betaflight; control disabled");
-                vTaskDelay(pdMS_TO_TICKS(2000));
+                service_for(2000);
                 continue;
             }
             connected = true;
@@ -163,7 +187,7 @@ static void bridge_task(void *argument)
             }
         }
         uint32_t elapsed = now_ms() - cycle_start;
-        vTaskDelay(pdMS_TO_TICKS(elapsed < 100 ? 100 - elapsed : 10));
+        service_for(elapsed < 100 ? 100 - elapsed : 10);
     }
 }
 
@@ -203,9 +227,9 @@ esp_err_t betaflight_bridge_start(void)
     if (result != ESP_OK) return result;
     result = uart_set_pin(BF_UART, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     if (result != ESP_OK) return result;
-    result = uart_driver_install(BF_UART, 1024, 512, 0, NULL, 0);
+    result = uart_driver_install(BF_UART, 4096, 2048, 0, NULL, 0);
     if (result != ESP_OK) return result;
-    if (xTaskCreate(bridge_task, "bf_bridge", 6144, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreate(bridge_task, "bf_bridge", 8192, NULL, 4, NULL) != pdPASS) {
         uart_driver_delete(BF_UART);
         return ESP_ERR_NO_MEM;
     }

@@ -41,7 +41,7 @@ void dashboard_init(void)
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x071018), 0);
 
     lv_obj_t *title = create_label(screen, 6, &lv_font_montserrat_14, 0x7ED8FF);
-    lv_label_set_text(title, "BF CAM  /  DJI TEST");
+    lv_label_set_text(title, "RotorREC / CAMERA CONTROL");
     s_connection_label = create_label(screen, 28, &lv_font_montserrat_20, 0xFFCC66);
     s_record_label = create_label(screen, 58, &lv_font_montserrat_20, 0xF2F5F7);
     s_spec_label = create_label(screen, 88, &lv_font_montserrat_14, 0xA9BAC5);
@@ -59,13 +59,16 @@ void dashboard_refresh(const camera_controller_state_t *state)
     uint32_t connection_color = 0xFFCC66;
     switch (state->phase) {
         case CAMERA_PHASE_RECONNECTING:
-            lv_label_set_text(s_connection_label, "ACTION 2 RECONNECTING...");
+            lv_label_set_text(s_connection_label, "CAMERA RECONNECTING...");
             break;
         case CAMERA_PHASE_SCANNING:
-            lv_label_set_text(s_connection_label, "SCANNING DJI CAMERA...");
+            lv_label_set_text(s_connection_label, "SCANNING CAMERA...");
             break;
         case CAMERA_PHASE_VERIFYING:
-            lv_label_set_text_fmt(s_connection_label, "CONFIRM CODE  %04u", state->pairing_code);
+            if (state->protocol == CAMERA_PROTOCOL_GOPRO)
+                lv_label_set_text(s_connection_label, "GOPRO BLE PAIRING...");
+            else
+                lv_label_set_text_fmt(s_connection_label, "CONFIRM CODE  %04u", state->pairing_code);
             break;
         case CAMERA_PHASE_ACTION2_SESSION:
             lv_label_set_text(s_connection_label, "ACTION 2 SESSION SETUP");
@@ -76,7 +79,9 @@ void dashboard_refresh(const camera_controller_state_t *state)
             connection_color = 0x57E389;
             break;
         case CAMERA_PHASE_READY:
-            if (state->protocol == CAMERA_PROTOCOL_DJI_ACTION2) {
+            if (state->protocol == CAMERA_PROTOCOL_GOPRO) {
+                lv_label_set_text(s_connection_label, "GOPRO CONNECTED");
+            } else if (state->protocol == CAMERA_PROTOCOL_DJI_ACTION2) {
                 lv_label_set_text(s_connection_label, "ACTION 2 BLE READY");
             } else {
                 lv_label_set_text(s_connection_label, state->snapshot.valid
@@ -85,7 +90,7 @@ void dashboard_refresh(const camera_controller_state_t *state)
             connection_color = 0x57E389;
             break;
         case CAMERA_PHASE_SCAN_FAILED:
-            lv_label_set_text(s_connection_label, "NO DJI CAMERA FOUND");
+            lv_label_set_text(s_connection_label, "NO CAMERA FOUND");
             connection_color = 0xFF6B6B;
             break;
         case CAMERA_PHASE_GATT_MISMATCH:
@@ -103,13 +108,16 @@ void dashboard_refresh(const camera_controller_state_t *state)
         case CAMERA_PHASE_INITIALIZING:
             lv_label_set_text(s_connection_label, "BLE INITIALIZING...");
             break;
+        case CAMERA_PHASE_WAITING_STATUS:
+            lv_label_set_text(s_connection_label, "WAITING CAMERA STATUS...");
+            break;
         default:
             lv_label_set_text(s_connection_label, "HOLD BOOT TO PAIR");
             break;
     }
     lv_obj_set_style_text_color(s_connection_label, lv_color_hex(connection_color), 0);
 
-    if (state->protocol == CAMERA_PROTOCOL_DJI_ACTION2) {
+    if (state->protocol == CAMERA_PROTOCOL_DJI_ACTION2 || state->protocol == CAMERA_PROTOCOL_GOPRO) {
         if (state->phase == CAMERA_PHASE_READY) {
             lv_label_set_text(s_record_label, state->command_pending
                 ? "WAITING CAMERA..." : !state->recording_valid ? "STATUS UNKNOWN"
@@ -127,7 +135,9 @@ void dashboard_refresh(const camera_controller_state_t *state)
             lv_label_set_text_fmt(s_spec_label, "BAT --   RSSI %d", state->rssi);
         }
         lv_label_set_text(s_detail_label, state->last_command_result == -3
-            ? "NO COMMAND ACK - CHECK CAMERA" : "HOLD BOOT TO PAIR");
+            ? "NO COMMAND ACK - CHECK CAMERA"
+            : state->protocol == CAMERA_PROTOCOL_GOPRO && !state->recording_valid
+            ? "SELECT VIDEO / CHECK STATUS" : "HOLD BOOT TO PAIR");
         return;
     }
 

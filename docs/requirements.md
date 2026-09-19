@@ -1,3 +1,7 @@
+# RotorREC 1.1 additions
+
+Passthrough settings and update requirements are specified in [passthrough setup](passthrough.md). Runtime selection supersedes any build-time camera choice below. All new hardware behavior remains pending validation.
+
 # RotorREC requirements
 
 Updated: 2026-09-18.
@@ -23,7 +27,7 @@ Do not share pairing frames or assume identical status formats simply because bo
 
 ### GoPro
 
-Future work is limited to newer models with official public connection specifications. No GoPro driver is implemented; do not add placeholders or claim unverified support.
+Use only the official public Open GoPro BLE specification. The runtime-selected adapter implements bonding, discovery, session setup, reconnect, keepalive, explicit video recording control and camera-reported encoding/battery status. Require Open GoPro API 2.x and the documented command/query/management characteristics. Do not claim hardware support until a model and firmware pass the checks in [GoPro setup](gopro.md).
 
 ### Out of scope
 

@@ -7,6 +7,7 @@ typedef enum {
     CAMERA_PROTOCOL_NONE,
     CAMERA_PROTOCOL_DJI_RSDK,
     CAMERA_PROTOCOL_DJI_ACTION2,
+    CAMERA_PROTOCOL_GOPRO,
 } camera_protocol_t;
 
 typedef enum {

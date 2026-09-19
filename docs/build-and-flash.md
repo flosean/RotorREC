@@ -4,43 +4,39 @@
 
 The verified toolchain is ESP-IDF v5.5.5. Use the terminal supplied by the ESP-IDF installer or run your SDK's export script so that `idf.py`, Python, CMake, Ninja, and the RISC-V compiler are available. No developer-specific installation path is required.
 
-## ESP32-C3-Zero
+## Board builds and first USB installation
 
-```sh
-idf.py -B build-c3-zero -DIDF_TARGET=esp32c3 -DSDKCONFIG=build-c3-zero/sdkconfig -DSDKCONFIG_DEFAULTS=config/sdkconfig.c3-zero.defaults build
-idf.py -B build-c3-zero -p PORT flash monitor
-```
-
-The PowerShell wrapper selects the isolated C3 configuration and build directory:
+Use fresh 1.1 build directories; old generated configurations use an incompatible single-app layout. The build rejects missing rollback, a wrong partition CSV or nonstandard board UART/Flash settings.
 
 ```powershell
-.\tools\c3-zero.ps1 -IdfArguments @('build')
-.\tools\c3-zero.ps1 -IdfArguments @('-p','COMxx','flash','monitor')
+.\tools\passthrough.ps1 -Board c3
+.\tools\passthrough.ps1 -Board c6
+.\tools\passthrough.ps1 -Board c3 -IdfArguments @('-p','COMxx','flash','monitor')
 ```
 
-## ESP32-C6-LCD-1.47
+Change `c3` to `c6` for the LCD board. The existing `c3-zero.ps1` wrapper also uses the new C3 build directory. In an ESP-IDF shell:
 
 ```sh
-idf.py -B build-modular -DIDF_TARGET=esp32c6 build
-idf.py -B build-modular -p PORT flash monitor
+idf.py -B build-passthrough-c3 -DIDF_TARGET=esp32c3 -DSDKCONFIG=build-passthrough-c3/sdkconfig -DSDKCONFIG_DEFAULTS=config/sdkconfig.c3-zero.defaults build
+idf.py -B build-passthrough-c6 -DIDF_TARGET=esp32c6 -DSDKCONFIG=build-passthrough-c6/sdkconfig -DSDKCONFIG_DEFAULTS=sdkconfig.defaults build
 ```
 
-PowerShell:
-
-```powershell
-.\tools\idf.ps1 -IdfArguments @('-B','build-modular','-DIDF_TARGET=esp32c6','build')
-.\tools\idf.ps1 -IdfArguments @('-B','build-modular','-p','COMxx','flash','monitor')
-```
-
-Component Manager downloads LVGL on the first C6 build using `dependencies.lock`. C3 does not use LVGL and disables Component Manager.
+Component Manager downloads LVGL on the first C6 build. C3 excludes LCD dependencies and disables Component Manager.
 
 ## Output and version
 
-Each build directory contains `rotorrec.bin`, the application image. Use `idf.py flash` to write the correct bootloader and partition table as well; the application image is not a whole-flash image.
+`version.txt` supplies version 1.1.0. Application files are `rotorrec_esp32c3.bin` and `rotorrec_esp32c6.bin`; project identity is embedded in the app descriptor so the update receiver can reject the wrong board. Each contains all camera adapters; selection is stored in NVS.
 
-`version.txt` is the single version source. CMake reads it into ESP-IDF `PROJECT_VER`, and the startup log prints the RotorREC version. Version 1.0.0 renamed the output from `bf_cam.bin` to `rotorrec.bin`. Internal `CONFIG_BF_CAM_*` names remain for configuration compatibility.
+Use `idf.py flash` (or the wrapper above) for the first USB install: it writes the bootloader, partition table, initial OTA metadata and app. An app-only update cannot migrate a 1.0 installation. Avoid `erase-flash` if retaining existing pairing profiles. Existing NVS remains at 0x9000 with size 0x6000.
 
-Do not run C3 set-target commands against the existing C6 build directory. Generated sdkconfig files and build output are excluded from Git; new environments generate settings from board defaults.
+For subsequent updates, generate a validated package:
+
+```sh
+python tools/rotorrec_manager.py pack build-passthrough-c3/rotorrec_esp32c3.bin build-passthrough-c3/rotorrec-c3-update.zip
+python tools/rotorrec_manager.py pack build-passthrough-c6/rotorrec_esp32c6.bin build-passthrough-c6/rotorrec-c6-update.zip
+```
+
+The package contains the application and its manifest, never a bootloader or partition table. See [passthrough setup](passthrough.md).
 
 ## Flashing and monitoring
 
@@ -58,6 +54,8 @@ Windows requires Visual Studio C++ Build Tools and the Windows SDK:
 
 ```powershell
 .\tools\test-betaflight.ps1
+.\tools\test-gopro.ps1
+.\tools\test-management.ps1
 ```
 
 Host tests and build commands do not flash hardware. See [verification status](verification-status.md) for hardware results.

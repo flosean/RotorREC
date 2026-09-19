@@ -1,9 +1,15 @@
 #include "camera_controller.h"
-
+#include "gopro/gopro.h"
+#include "management/management.h"
+#include <stdatomic.h>
+static atomic_bool s_initialized;
+static atomic_bool s_pair_queued;
+static camera_protocol_t s_selected;
 #include <stdbool.h>
 
 #include "esp_log.h"
 #include "esp_random.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -21,6 +27,8 @@ static volatile bool s_command_busy;
 static volatile bool s_force_discovery;
 static volatile int s_last_command_result;
 static TaskHandle_t s_reconnect_task;
+static bool s_rs_saved;
+static uint8_t s_rs_profile[7];
 static portMUX_TYPE s_command_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static bool take_command(void)
@@ -60,6 +68,8 @@ static void set_recording_task(void *argument)
 
 esp_err_t camera_controller_request_recording(bool recording)
 {
+    if (!s_initialized || management_active()) return ESP_ERR_INVALID_STATE;
+    if (s_selected == CAMERA_PROTOCOL_GOPRO) return gopro_request_recording(recording);
     camera_controller_state_t state;
     camera_controller_get_state(&state);
     if (state.phase != CAMERA_PHASE_READY || !state.recording_valid || state.saving ||
@@ -144,7 +154,10 @@ static void reconnect_task(void *argument)
     }
     s_reconnect_task = NULL;
     if (start_discovery) {
-        xTaskCreate(pair_camera_task, "dji_pair", 8192, NULL, 5, NULL);
+        if (xTaskCreate(pair_camera_task, "dji_pair", 8192, NULL, 5, NULL) != pdPASS) {
+            s_pair_queued = false;
+            s_phase = CAMERA_PHASE_SCAN_FAILED;
+        }
     }
     vTaskDelete(NULL);
 }
@@ -165,11 +178,12 @@ static void start_reconnect(void)
 
 static void pair_camera_task(void *argument)
 {
-    (void)argument;
     if (!take_command()) {
+        s_pair_queued = false;
         vTaskDelete(NULL);
         return;
     }
+    s_pair_queued = false;
     s_last_command_result = 0;
     s_protocol = CAMERA_PROTOCOL_NONE;
 
@@ -183,7 +197,9 @@ static void pair_camera_task(void *argument)
     dji_rs_sdk_reset();
     dji_action2_reset();
     s_phase = CAMERA_PHASE_SCANNING;
-    if (connect_logic_ble_connect(false) != 0) {
+    bool remembered = argument != NULL && s_selected == CAMERA_PROTOCOL_DJI_RSDK && s_rs_saved;
+    if (remembered) ble_set_reconnect_target(s_rs_profile, s_rs_profile[6]);
+    if (connect_logic_ble_connect(remembered) != 0) {
         s_phase = s_ble_profile.connection_status.is_connected
             ? CAMERA_PHASE_GATT_MISMATCH
             : CAMERA_PHASE_SCAN_FAILED;
@@ -192,25 +208,30 @@ static void pair_camera_task(void *argument)
         return;
     }
 
-    s_pairing_code = (uint16_t)(esp_random() % 10000);
-    s_phase = CAMERA_PHASE_VERIFYING;
-    dji_rs_sdk_connect_result_t rsdk_result = dji_rs_sdk_connect(s_pairing_code);
-    if (rsdk_result != DJI_RSDK_CONNECT_FAILED) {
+    if (s_selected == CAMERA_PROTOCOL_DJI_RSDK) {
+        s_pairing_code = (uint16_t)(esp_random() % 10000);
+        s_phase = CAMERA_PHASE_VERIFYING;
+        dji_rs_sdk_connect_result_t result = dji_rs_sdk_connect(s_pairing_code);
         s_protocol = CAMERA_PROTOCOL_DJI_RSDK;
-        dji_action2_forget_profile();
-        s_phase = rsdk_result == DJI_RSDK_CONNECT_READY
-            ? CAMERA_PHASE_READY
-            : CAMERA_PHASE_SUBSCRIBE_FAILED;
-        release_command();
-        vTaskDelete(NULL);
-        return;
-    }
-
-    /* Action 2 ignores the public R SDK handshake and uses legacy DUML. */
-    vTaskDelay(pdMS_TO_TICKS(800));
-    s_phase = CAMERA_PHASE_SCANNING;
-    if (connect_logic_ble_connect(false) != 0) {
-        s_phase = CAMERA_PHASE_SCAN_FAILED;
+        s_phase = result == DJI_RSDK_CONNECT_READY ? CAMERA_PHASE_READY : CAMERA_PHASE_PAIR_REJECTED;
+        if (result == DJI_RSDK_CONNECT_READY) {
+            ble_diagnostics_t diagnostics;
+            ble_get_diagnostics(&diagnostics);
+            uint8_t profile[7];
+            memcpy(profile, s_ble_profile.remote_bda, 6);
+            profile[6] = diagnostics.address_type;
+            if (!s_rs_saved || memcmp(profile, s_rs_profile, sizeof(profile))) {
+                nvs_handle_t handle;
+                esp_err_t saved = nvs_open("dji_rsdk", NVS_READWRITE, &handle);
+                if (saved == ESP_OK) {
+                    saved = nvs_set_blob(handle, "target", profile, sizeof(profile));
+                    if (saved == ESP_OK) saved = nvs_commit(handle);
+                    nvs_close(handle);
+                }
+                if (saved != ESP_OK) ESP_LOGE(TAG, "Could not save R SDK camera: %s", esp_err_to_name(saved));
+                else { memcpy(s_rs_profile, profile, sizeof(profile)); s_rs_saved = true; }
+            }
+        }
         release_command();
         vTaskDelete(NULL);
         return;
@@ -232,36 +253,62 @@ static void auto_connect_task(void *argument)
     vTaskDelay(pdMS_TO_TICKS(500));
     uint8_t address[ESP_BD_ADDR_LEN];
     uint8_t address_type;
-    if (dji_action2_get_profile(address, &address_type)) {
+    if (s_selected == CAMERA_PROTOCOL_DJI_ACTION2 && dji_action2_get_profile(address, &address_type)) {
         s_protocol = CAMERA_PROTOCOL_DJI_ACTION2;
         s_phase = CAMERA_PHASE_RECONNECTING;
         start_reconnect();
         vTaskDelete(NULL);
         return;
     }
-    pair_camera_task(NULL);
+    pair_camera_task(s_rs_saved ? (void *)1 : NULL);
 }
 
 esp_err_t camera_controller_init(void)
 {
+    s_selected = management_camera();
+    if (s_selected == CAMERA_PROTOCOL_DJI_ACTION2) s_pairing_code = 5160;
+    if (s_selected == CAMERA_PROTOCOL_GOPRO) {
+        esp_err_t result = gopro_init();
+        s_initialized = result == ESP_OK;
+        return result;
+    }
     dji_rs_sdk_init();
     dji_action2_init(action2_disconnected);
     if (connect_logic_ble_init() != 0) {
         s_phase = CAMERA_PHASE_SCAN_FAILED;
         return ESP_FAIL;
     }
-    dji_action2_load_profile();
+    if (s_selected == CAMERA_PROTOCOL_DJI_ACTION2) dji_action2_load_profile();
+    else {
+        nvs_handle_t handle;
+        if (nvs_open("dji_rsdk", NVS_READONLY, &handle) == ESP_OK) {
+            size_t size = sizeof(s_rs_profile);
+            s_rs_saved = nvs_get_blob(handle, "target", s_rs_profile, &size) == ESP_OK &&
+                size == sizeof(s_rs_profile) && s_rs_profile[6] <= BLE_ADDR_TYPE_RANDOM;
+            nvs_close(handle);
+        }
+    }
     s_phase = CAMERA_PHASE_IDLE;
+    s_initialized = true;
     return ESP_OK;
 }
 
 void camera_controller_start(void)
 {
+    if (!s_initialized) return;
+    if (s_selected == CAMERA_PROTOCOL_GOPRO) { gopro_start(); return; }
     xTaskCreate(auto_connect_task, "dji_auto_connect", 8192, NULL, 5, NULL);
 }
 
 void camera_controller_short_press(void)
 {
+    if (!s_initialized || management_active()) return;
+    if (s_selected == CAMERA_PROTOCOL_GOPRO) {
+        camera_controller_state_t state;
+        gopro_get_state(&state);
+        gopro_request_recording(!state.recording);
+        return;
+    }
     if (!take_command()) {
         return;
     }
@@ -283,16 +330,22 @@ void camera_controller_short_press(void)
     release_command();
 }
 
-void camera_controller_request_pairing(void)
+esp_err_t camera_controller_request_pairing(void)
 {
-    if (s_command_busy) {
-        return;
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (s_selected == CAMERA_PROTOCOL_GOPRO) { gopro_request_pairing(); return ESP_OK; }
+    if (s_command_busy || atomic_exchange(&s_pair_queued, true)) {
+        return ESP_ERR_INVALID_STATE;
     }
     if (s_reconnect_task != NULL) {
         s_force_discovery = true;
-        return;
+        return ESP_OK;
     }
-    xTaskCreate(pair_camera_task, "dji_pair", 8192, NULL, 5, NULL);
+    s_phase = CAMERA_PHASE_SCANNING;
+    if (xTaskCreate(pair_camera_task, "dji_pair", 8192, NULL, 5, NULL) == pdPASS) return ESP_OK;
+    s_phase = CAMERA_PHASE_SCAN_FAILED;
+    s_pair_queued = false;
+    return ESP_ERR_NO_MEM;
 }
 
 void camera_controller_get_state(camera_controller_state_t *state)
@@ -300,12 +353,14 @@ void camera_controller_get_state(camera_controller_state_t *state)
     if (state == NULL) {
         return;
     }
+    if (!s_initialized) { *state = (camera_controller_state_t){0}; return; }
+    if (s_selected == CAMERA_PROTOCOL_GOPRO) { gopro_get_state(state); return; }
     *state = (camera_controller_state_t) {
         .protocol = s_protocol,
         .phase = s_phase,
         .pairing_code = s_pairing_code,
         .last_command_result = s_last_command_result,
-        .command_pending = s_command_busy,
+        .command_pending = s_command_busy || s_pair_queued,
     };
 
     dji_rs_sdk_get_snapshot(&state->snapshot);
@@ -318,7 +373,7 @@ void camera_controller_get_state(camera_controller_state_t *state)
         state->saving = action2.saving;
         state->battery_valid = action2.battery_valid;
         state->snapshot = (camera_snapshot_t) { .battery = action2.battery };
-        state->command_pending = action2.command_pending || s_command_busy;
+        state->command_pending = action2.command_pending || s_command_busy || s_pair_queued;
         state->rssi = action2.rssi;
         state->address_type = action2.address_type;
         state->mtu = action2.mtu;

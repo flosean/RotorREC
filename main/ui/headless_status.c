@@ -22,7 +22,7 @@ void headless_status_refresh(const camera_controller_state_t *state)
         ESP_LOGI("CAM_STATUS", "phase=%d protocol=%d | %s | %s | pending=%u result=%d",
                  state->phase, state->protocol, lines[0], lines[1],
                  state->command_pending, state->last_command_result);
-        if (state->phase == CAMERA_PHASE_VERIFYING) {
+        if (state->phase == CAMERA_PHASE_VERIFYING && state->protocol != CAMERA_PROTOCOL_GOPRO) {
             ESP_LOGI("CAM_STATUS", "Pairing code: %04u; confirm on camera", state->pairing_code);
         }
         last_phase = state->phase;

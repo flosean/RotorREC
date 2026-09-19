@@ -4,12 +4,15 @@
 
 RotorREC connects an action camera to your FPV setup. An ESP32 communicates with the camera over BLE, reads a Betaflight USER mode over UART/MSPv2, controls recording, and sends actual camera status and battery level to the OSD.
 
-Current firmware version: **1.0.0**. **Betaflight UART communication and OSD functionality have been tested on real hardware and confirmed working by the project owner.**
+Current firmware version: **1.1.0 (hardware validation pending)**. **Betaflight UART communication and OSD functionality have been tested on real hardware and confirmed working by the project owner.**
 
 ## Features
 
+- Betaflight passthrough manager: select Action 2 / DJI R SDK / GoPro, pair cameras, and update over the existing UART using dual app slots and rollback. See [passthrough setup](docs/passthrough.md); new functionality is not yet hardware-validated.
+
 - DJI Action 2 legacy BLE/DUML: pairing, saved camera profiles, automatic reconnection, recording control, actual recording state, and battery level.
 - DJI public R SDK: a separate protocol path for Action 4; connection, recording control, and recording settings were verified in an earlier hardware revision.
+- GoPro official Open GoPro BLE: runtime-selectable pairing, saved target, reconnection, video start/stop, actual encoding status, battery, and keepalive. Hardware validation is pending; see [GoPro setup](docs/gopro.md).
 - Betaflight USER1-USER4 recording control. USER1 is the default; assign the AUX channel and switch range in Betaflight Modes.
 - OSD Custom Message 1 for camera status and Custom Message 2 for camera battery level.
 - Short-press BOOT to toggle recording; hold for 1.2 seconds to scan and pair again.
@@ -24,7 +27,7 @@ Current firmware version: **1.0.0**. **Betaflight UART communication and OSD fun
 | ESP32-C3-Zero | Flashed and verified to receive Action 2 status and battery data; visual confirmation of the revised LED colors and full operational regression remain open |
 | ESP32-C6-LCD-1.47 | LCD verified previously; current-version hardware regression remains open |
 | Betaflight UART and OSD | Tested on real hardware and confirmed working by the project owner |
-| GoPro | Planned; not implemented |
+| GoPro | Official Open GoPro BLE adapter implemented; hardware compatibility and functional validation pending |
 
 See [verification status](docs/verification-status.md) for evidence and remaining checks.
 
@@ -51,30 +54,33 @@ cd RotorREC
 ESP32-C3-Zero, without a display or downloaded component dependencies:
 
 ```sh
-idf.py -B build-c3-zero -DIDF_TARGET=esp32c3 -DSDKCONFIG=build-c3-zero/sdkconfig -DSDKCONFIG_DEFAULTS=config/sdkconfig.c3-zero.defaults build
-idf.py -B build-c3-zero -p PORT flash monitor
+idf.py -B build-passthrough-c3 -DIDF_TARGET=esp32c3 -DSDKCONFIG=build-passthrough-c3/sdkconfig -DSDKCONFIG_DEFAULTS=config/sdkconfig.c3-zero.defaults build
+idf.py -B build-passthrough-c3 -p PORT flash monitor
 ```
 
 ESP32-C6-LCD-1.47, with LVGL downloaded on the first build:
 
 ```sh
-idf.py -B build-modular -DIDF_TARGET=esp32c6 build
-idf.py -B build-modular -p PORT flash monitor
+idf.py -B build-passthrough-c6 -DIDF_TARGET=esp32c6 -DSDKCONFIG=build-passthrough-c6/sdkconfig -DSDKCONFIG_DEFAULTS=sdkconfig.defaults build
+idf.py -B build-passthrough-c6 -p PORT flash monitor
 ```
 
 Replace `PORT` with your serial port. Use separate build directories for the two boards and flash only the image for your board. See [building and flashing](docs/build-and-flash.md) for PowerShell wrappers and tool requirements.
+
+Action 2 is the default. Select DJI R SDK or GoPro with the [passthrough manager](docs/passthrough.md); changing the selection restarts the ESP. Version 1.0 installations require one USB installation of the new bootloader, partition table and application before passthrough updates work.
 
 ## Project layout
 
 ```text
 main/
   app_main.c       Startup and main loop
-  camera/          Shared camera state and control; separate DJI protocol adapters
+  camera/          Shared camera state and control; separate DJI and GoPro adapters
   betaflight/      MSPv2, USER mode policy, UART, and OSD
+  management/      Framing, camera selection, UART update receiver
   platform/        Button, LCD, and RGB hardware interfaces
   ui/              Display, headless logging, and status indication
 components/        Required DJI and Waveshare components
-config/            C3 board defaults
+config/            Board and GoPro protocol defaults
 tests/             Host tests for protocol, control policy, and status indication
 tools/             Build and test entry points
 docs/              Setup, architecture, requirements, and verification
@@ -91,6 +97,8 @@ On Windows, install Visual Studio C++ Build Tools and run:
 
 ```powershell
 .\tools\test-betaflight.ps1
+.\tools\test-gopro.ps1
+.\tools\test-management.ps1
 ```
 
 Tests cover MSP framing and parsing, USER control policy, OSD text, and LED state and color serialization. The initial release passed 10,971 checks and clean builds for both boards. Hardware verification is tracked separately.

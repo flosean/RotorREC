@@ -8,7 +8,7 @@ if ($IdfArguments -contains 'set-target' -or $IdfArguments -contains 'fullclean'
     throw 'This wrapper owns an isolated C3 build; use build, menuconfig, flash or monitor.'
 }
 $c3Project = Split-Path -Parent $PSScriptRoot
-$c3Build = Join-Path $c3Project 'build-c3-zero'
+$c3Build = Join-Path $c3Project 'build-passthrough-c3'
 $c3Sdkconfig = Join-Path $c3Build 'sdkconfig'
 $c3Defaults = Join-Path $c3Project 'config/sdkconfig.c3-zero.defaults'
 Push-Location $c3Project

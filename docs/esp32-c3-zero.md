@@ -42,7 +42,7 @@ Open an ESP-IDF PowerShell terminal:
 .\tools\c3-zero.ps1 -IdfArguments @('-p','COMxx','flash','monitor')
 ```
 
-Replace COMxx with the actual port. The wrapper uses `build-c3-zero/`, its own sdkconfig, and `config/sdkconfig.c3-zero.defaults`. It does not change C6 settings. The application image is `build-c3-zero/rotorrec.bin`; the flash command also writes the bootloader and partition table.
+Replace COMxx with the actual port. The wrapper uses `build-passthrough-c3/`, its own sdkconfig, and `config/sdkconfig.c3-zero.defaults`. It does not change C6 settings. The application image is `build-passthrough-c3/rotorrec_esp32c3.bin`; the flash command also writes the bootloader and partition table.
 
 Other systems can use the idf.py commands in [building and flashing](build-and-flash.md). Do not flash C6 images onto C3. If automatic download fails, hold BOOT, press RESET, and release BOOT. The serial port may change in download mode. Exit monitoring with Ctrl+].
 

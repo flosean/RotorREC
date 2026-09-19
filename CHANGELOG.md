@@ -1,10 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 - Unreleased
 
+- Add a runtime-selectable official Open GoPro BLE adapter: bonding, session setup, saved-target reconnection, keepalive, video start/stop and actual encoding/battery status. Connect it to BOOT, Betaflight and both board interfaces; hardware validation is pending.
+- Add GoPro protocol/bridge host tests, unified board builds and pairing instructions.
 - Translate all tracked documentation, source comments, and remaining localized diagnostic and camera mode strings into English.
 - Record the project owner's confirmation that Betaflight UART communication and OSD functionality have been tested on real hardware and work correctly.
-- Keep firmware version 1.0.0; this update changes documentation and displayed text, not control behavior.
+- Add the Betaflight passthrough GUI/CLI, saved camera selection, bounded management framing, dual OTA slots, SHA-256/image checks, replay protection and startup rollback. Existing installations need one USB migration.
+- Add management fault-injection tests and host update/reboot tests. Physical passthrough, camera switching and power-cut acceptance remain pending.
 
 ## 1.0.0 - 2026-09-18
 
