@@ -57,6 +57,15 @@ void dashboard_refresh(const camera_controller_state_t *state)
         return;
     }
     uint32_t connection_color = 0xFFCC66;
+    if (state->phase == CAMERA_PHASE_LINK_PAUSED) {
+        lv_label_set_text(s_connection_label, "LINK PAUSE");
+        lv_obj_set_style_text_color(s_connection_label, lv_color_hex(0x7ED8FF), 0);
+        lv_label_set_text(s_record_label, "CAMERA LINK DISABLED");
+        lv_obj_set_style_text_color(s_record_label, lv_color_hex(0xF2F5F7), 0);
+        lv_label_set_text(s_spec_label, "PAIRING IS SAVED");
+        lv_label_set_text(s_detail_label, "HOLD BOOT TO RESUME");
+        return;
+    }
     switch (state->phase) {
         case CAMERA_PHASE_RECONNECTING:
             lv_label_set_text(s_connection_label, "CAMERA RECONNECTING...");
@@ -151,8 +160,10 @@ void dashboard_refresh(const camera_controller_state_t *state)
 
     char elapsed[16];
     char remaining[16];
-    format_duration(state->snapshot.record_time, elapsed, sizeof(elapsed));
-    format_duration(state->snapshot.remain_time, remaining, sizeof(remaining));
+    if (state->snapshot.record_time_valid) format_duration(state->snapshot.record_time, elapsed, sizeof(elapsed));
+    else snprintf(elapsed, sizeof(elapsed), "--");
+    if (state->snapshot.remain_time_valid) format_duration(state->snapshot.remain_time, remaining, sizeof(remaining));
+    else snprintf(remaining, sizeof(remaining), "--");
     if (state->snapshot.recording) {
         lv_label_set_text_fmt(s_record_label, "REC  %s", elapsed);
     } else {
@@ -161,8 +172,12 @@ void dashboard_refresh(const camera_controller_state_t *state)
     lv_obj_set_style_text_color(s_record_label,
                                 lv_color_hex(state->snapshot.recording ? 0xFF4D5A : 0xF2F5F7), 0);
     lv_label_set_text_fmt(s_spec_label, "%s  %s",
-                          state->snapshot.mode, state->snapshot.parameters);
-    lv_label_set_text_fmt(s_detail_label, "BAT %u%%   SD %luMB   REM %s",
-                          state->snapshot.battery,
-                          (unsigned long)state->snapshot.remain_capacity, remaining);
+                          state->snapshot.mode, state->snapshot.parameters_valid ? state->snapshot.parameters : "--");
+    char capacity[16], battery[8];
+    if (state->snapshot.remain_capacity_valid)
+        snprintf(capacity, sizeof(capacity), "%luMB", (unsigned long)state->snapshot.remain_capacity);
+    else snprintf(capacity, sizeof(capacity), "--");
+    if (state->battery_valid) snprintf(battery, sizeof(battery), "%u%%", state->snapshot.battery);
+    else snprintf(battery, sizeof(battery), "--");
+    lv_label_set_text_fmt(s_detail_label, "BAT %s   SD %s   REM %s", battery, capacity, remaining);
 }

@@ -92,6 +92,70 @@ class UpdatePort:
 
 
 class Checks(unittest.TestCase):
+    def test_settings_golden_and_validation(self):
+        defaults = dict(user_mode_id=40, osd_lines=2, led_percent=5,
+                        low_battery_percent=0, link_paused=False, owns_extra_lines=False)
+        self.assertEqual(m.encode_settings(defaults), 0x01000050)
+        self.assertEqual(m.decode_settings(0x01000050), defaults)
+        for raw in (0, -1, 0x100000000, 0x02000050, 0x01080050, 0x01000000, 0x01000054, True):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                m.decode_settings(raw)
+        for change in (dict(user_mode_id=39), dict(osd_lines=3), dict(led_percent=0),
+                       dict(led_percent=101), dict(low_battery_percent=101), dict(link_paused=1),
+                       dict(user_mode_id=True)):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                m.encode_settings(defaults | change)
+        for user in range(40, 44):
+            for lines in (2, 4):
+                for percent in (1, 5, 25, 100):
+                    for threshold in (0, 20, 100):
+                        for pause in (False, True):
+                            value = defaults | dict(user_mode_id=user, osd_lines=lines,
+                                owns_extra_lines=lines == 4, led_percent=percent,
+                                low_battery_percent=threshold, link_paused=pause)
+                            self.assertEqual(m.decode_settings(m.encode_settings(value)), value)
+
+    def test_settings_merge_and_verified_reboot(self):
+        client = m.Client(FakePort())
+        initial = dict(user_mode_id=43, osd_lines=4, led_percent=25,
+                       low_battery_percent=20, link_paused=False, owns_extra_lines=True)
+        raw = m.encode_settings(initial)
+        client.info = lambda: dict(settings_raw=0x01000050, saved_settings_raw=raw)
+        observed = []
+        client.reboot = lambda **kw: observed.append(kw) or kw
+        result = client.set_settings(osd_lines=2, link_paused=True)
+        expected = m.encode_settings(initial | dict(osd_lines=2, link_paused=True))
+        self.assertEqual(result, dict(settings_raw=expected))
+        command, _, _, payload = m.Parser().feed(client.port.requests[0])[0]
+        self.assertEqual((command, struct.unpack("<I", payload)[0]), (m.SET_SETTINGS, expected))
+        self.assertTrue(m.decode_settings(expected)["owns_extra_lines"])
+
+    def test_settings_rejection_never_reboots(self):
+        client = m.Client(FakePort(error=0x103))
+        client.info = lambda: dict(settings_raw=0x01000050)
+        client.reboot = lambda **kw: self.fail("Must not restart after rejecting settings")
+        with self.assertRaises(m.DeviceError):
+            client.set_settings(link_paused=True)
+        client.port.requests.clear()
+        client.info = lambda: dict(version="1.1.0")
+        with self.assertRaisesRegex(ValueError, "update it first"):
+            client.set_settings(osd_lines=4)
+        self.assertEqual(client.port.requests, [])
+
+    def test_reboot_detects_settings_loss(self):
+        client = m.Client(FakePort())
+        client.info = lambda hello=False: dict(pending_verify=0, settings_raw=0x01000050)
+        with self.assertRaisesRegex(RuntimeError, "Settings did not persist"):
+            client.reboot(settings_raw=0x01040054)
+
+    def test_pause_status_never_claims_standby(self):
+        value = dict(phase=13, settings_raw=0x01000058, saved_settings_raw=0x01000058,
+                     link_paused=1, recording_valid=0)
+        result = m.describe_status(value)
+        self.assertIn("Link Pause", result)
+        self.assertIn("Recording status unavailable", result)
+        self.assertNotIn("Standby", result)
+
     def test_packets(self):
         wire = m.encode(m.DATA, 0x12345678, 19, bytes(range(256)) * 4)
         for split in range(len(wire) + 1):

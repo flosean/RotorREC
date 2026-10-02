@@ -65,7 +65,7 @@ app_main
 
 - `msp_v2`: framing, stream parsing, length checks, and CRC.
 - `osd_messages`: four Custom Message payloads and the 16-byte limit.
-- `bf_control`: testable USER mode mapping, debounce and loss-of-link policy, and two camera OSD lines.
+- `bf_control`: testable USER mode mapping, debounce and loss-of-link policy, two/four camera OSD lines and low-battery hysteresis. Per-field validity gates extra telemetry.
 - `bf_bridge`: a dedicated UART1 task that validates the FC/API, polls BOXIDS/STATUS, writes volatile OSD text, and handles acknowledgements and timeouts. It depends on the shared controller, not DJI details.
 - Non-blocking `request_recording` specifies the desired state and shares command gating with BOOT to avoid blind toggling. Betaflight UART and OSD operation have been confirmed on hardware by the project owner.
 
@@ -76,6 +76,8 @@ app_main
 - The existing `bf_bridge` task remains the only UART reader/writer. Its polling and disconnected waits service management frames; active management suppresses MSP and USER control. No second reader or UART input flush can consume HELLO.
 - Startup has a 20-second restart guard. After two seconds of main-loop operation, NVS/UART health gates pending-image confirmation. Camera presence is not required.
 - Management failure never erases all NVS. DJI SDK initialization returns storage errors rather than silently clearing profiles.
+- `settings.c` validates a versioned packed setting stored as one NVS key. Current settings are immutable for the boot; committed settings are reported separately until restart. Missing keys retain compile-time USER selection and previous display defaults; invalid stored formats block camera startup without erasing profiles.
+- Link Pause skips adapter/BLE initialization, invalidates USER input and blanks owned OSD lines. BOOT only queues resume; the UART task owns the NVS commit and restart. Camera profiles are retained.
 
 ### `components/dji_camera_sdk`
 
@@ -95,4 +97,4 @@ The board's ST7789 and LVGL port, including the rotated 34-pixel offset, 320x20 
 
 ## Adding a camera
 
-Keep new protocol implementations behind the existing connect, explicit recording request and state-query interface. Current camera-family selection happens at build time; automatic cross-brand discovery and simultaneous camera control are not implemented.
+Keep new protocol implementations behind the existing connect, explicit recording request and state-query interface. All three adapters are included in each board image; the passthrough manager saves the selected protocol in NVS and restarts the ESP. Automatic cross-brand discovery and simultaneous camera control are not implemented. See [camera settings](camera-settings.md) for the first-batch implementation and [CamLink evaluation](camlink-evaluation.md) for later proposals.

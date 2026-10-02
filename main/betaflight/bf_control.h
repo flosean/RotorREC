@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "camera/camera_types.h"
+#include "management/settings.h"
 
 typedef struct {
     int mode_bit;
@@ -35,3 +36,7 @@ bf_record_action_t bf_record_policy_step(bf_record_policy_t *policy, uint32_t no
                                          bool input_valid, bool active,
                                          const camera_controller_state_t *camera);
 void bf_camera_osd(const camera_controller_state_t *camera, char lines[2][17]);
+typedef struct { bool low_battery; } bf_osd_state_t;
+void bf_camera_osd_configured(const camera_controller_state_t *camera,
+                             const rr_settings_t *settings, bf_osd_state_t *state,
+                             char lines[4][17]);

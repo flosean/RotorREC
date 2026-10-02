@@ -24,10 +24,15 @@ typedef enum {
     CAMERA_PHASE_GATT_MISMATCH,
     CAMERA_PHASE_PAIR_REJECTED,
     CAMERA_PHASE_SUBSCRIBE_FAILED,
+    CAMERA_PHASE_LINK_PAUSED,
 } camera_phase_t;
 
 typedef struct {
     bool valid;
+    bool record_time_valid;
+    bool remain_time_valid;
+    bool remain_capacity_valid;
+    bool parameters_valid;
     bool recording;
     uint8_t battery;
     uint16_t record_time;
@@ -43,6 +48,7 @@ typedef struct {
     uint16_t pairing_code;
     int last_command_result;
     bool command_pending;
+    bool link_connected; /* Also true while pairing/waiting for status. */
     bool recording;
     bool recording_valid;
     bool saving;

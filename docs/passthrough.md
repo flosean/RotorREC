@@ -2,6 +2,8 @@
 
 RotorREC 1.1 includes a local GUI and CLI. Connect the computer to the **flight controller USB**, select its port, and use the existing RotorREC UART wiring. The manager opens Betaflight serial passthrough; RotorREC receives settings and firmware directly on UART1. It does not enter the ESP ROM downloader or require BOOT/EN wiring.
 
+The 1.2 development firmware adds saved USER/OSD/LED/battery settings and Link Pause through the same manager. See [camera settings](camera-settings.md) for commands, restart verification and acceptance. No additional USB migration is needed when the 1.1 dual-slot layout is already installed.
+
 **Status: both board builds and automated tests pass. Real FC passthrough, radio/camera switching, GUI interaction and physical power-cut/rollback tests are still pending. Previous UART/OSD hardware results do not validate this new update path.**
 
 ## First installation / migration from 1.0

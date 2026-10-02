@@ -1,5 +1,8 @@
 # Documentation
 
+- [Camera settings](camera-settings.md): 1.2 development settings, four-line OSD, low-battery warning, Link Pause and hardware acceptance (Traditional Chinese).
+- [CamLink feature evaluation](camlink-evaluation.md): historical official comparison and staged proposals; first-batch implementation is documented separately (Traditional Chinese).
+
 - [Passthrough setup](passthrough.md): USB migration, camera selection, management GUI/CLI, update packages, recovery and test status.
 
 - [Building and flashing](build-and-flash.md): toolchain, board builds, versioning, and tests.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0-dev - Unreleased
+
+- Add saved USER1-USER4 selection, two/four-line OSD, C3 LED brightness (1-100%) and optional low-battery warning with hysteresis. Defaults retain the existing two-line behavior.
+- Expose individually validated DJI R SDK recording duration, remaining video time, resolution/FPS and storage capacity. Photo/unknown modes, sentinel values and stale/disconnected data do not masquerade as valid video telemetry.
+- Add persistent Link Pause with pairing retained, BLE disabled at startup and owned OSD lines cleared. Resume through the manager or a 1.2-second BOOT hold; settings changes restart the ESP and obey camera/OTA busy gates.
+- Extend the UART manager GUI/CLI with verified settings save/reboot; lock connection fields during operations. Fix stale offline recording flags blocking recovery.
+- Add native telemetry, settings/NVS fault-injection and hidden Tk GUI regressions. Both board builds pass; physical BLE, OSD, power-cycle and update acceptance remain pending.
+
 ## 1.1.0 - Unreleased
 
 - Add a runtime-selectable official Open GoPro BLE adapter: bonding, session setup, saved-target reconnection, keepalive, video start/stop and actual encoding/battery status. Connect it to BOOT, Betaflight and both board interfaces; hardware validation is pending.

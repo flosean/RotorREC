@@ -12,12 +12,15 @@
 #include "mbedtls/sha256.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "sdkconfig.h"
 #endif
 
 static atomic_bool s_active;
 static atomic_bool s_serviced;
 static bool s_reset_control;
 static camera_protocol_t s_camera = CAMERA_PROTOCOL_DJI_ACTION2;
+static rr_settings_t s_settings, s_saved_settings;
+static atomic_bool s_resume_requested;
 static esp_err_t s_storage;
 static rr_parser_t s_parser;
 static rr_packet_t s_request, s_last, s_reply;
@@ -34,6 +37,8 @@ static bool s_updating, s_committed;
 
 esp_err_t management_init(void)
 {
+    s_settings = rr_settings_defaults(CONFIG_BF_CAM_USER_MODE_ID);
+    s_saved_settings = s_settings;
     s_storage = nvs_flash_init();
     if (s_storage != ESP_OK) return s_storage;
     nvs_handle_t handle;
@@ -42,14 +47,22 @@ esp_err_t management_init(void)
     if (err != ESP_OK) return s_storage = err;
     uint32_t setting = 0;
     err = nvs_get_u32(handle, "camera_v1", &setting);
+    if (err == ESP_OK && setting >= CAMERA_PROTOCOL_DJI_RSDK && setting <= CAMERA_PROTOCOL_GOPRO)
+        s_camera = (camera_protocol_t)setting;
+    else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(handle);
+        return s_storage = err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
+    }
+    err = nvs_get_u32(handle, "settings_v1", &setting);
     nvs_close(handle);
-    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
-    if (err != ESP_OK || setting < CAMERA_PROTOCOL_DJI_RSDK || setting > CAMERA_PROTOCOL_GOPRO)
-        return s_storage = ESP_ERR_INVALID_STATE;
-    s_camera = (camera_protocol_t)setting;
+    if (err == ESP_OK) {
+        if (!rr_settings_decode(setting, &s_settings)) return s_storage = ESP_ERR_INVALID_STATE;
+        s_saved_settings = s_settings;
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) return s_storage = err;
     return ESP_OK;
 }
 camera_protocol_t management_camera(void) { return s_camera; }
+const rr_settings_t *management_settings(void) { return &s_settings; }
 bool management_active(void) { return atomic_load(&s_active); }
 bool management_healthy(void) { return atomic_load(&s_serviced); }
 bool management_take_control_reset(void)
@@ -60,7 +73,9 @@ bool management_take_control_reset(void)
 }
 void management_button_pair(void)
 {
-    if (!management_active()) camera_controller_request_pairing();
+    if (management_active()) return;
+    if (s_settings.link_paused) atomic_store(&s_resume_requested, true);
+    else camera_controller_request_pairing();
 }
 static void abort_update(void)
 {
@@ -75,8 +90,24 @@ static bool camera_busy(void)
     camera_controller_state_t state;
     camera_controller_get_state(&state);
     /* Unknown status is not permission to disrupt a connected camera. */
-    return state.recording || state.saving || state.command_pending ||
-        (state.phase == CAMERA_PHASE_READY && !state.recording_valid);
+    bool connected = state.link_connected || state.phase == CAMERA_PHASE_READY;
+    return state.command_pending || (connected && (state.recording || state.saving ||
+        state.phase != CAMERA_PHASE_READY || !state.recording_valid));
+}
+static esp_err_t save_settings(rr_settings_t candidate)
+{
+    if (s_storage != ESP_OK || s_updating || s_committed || camera_busy()) return ESP_ERR_INVALID_STATE;
+    /* Preserve ownership across repeated saves before a restart. */
+    candidate.owns_extra_lines |= s_saved_settings.owns_extra_lines;
+    if (!rr_settings_valid(&candidate)) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("rotorrec", NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u32(handle, "settings_v1", rr_settings_encode(&candidate));
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err == ESP_OK) s_saved_settings = candidate;
+    return err;
 }
 static void info(void)
 {
@@ -94,12 +125,17 @@ static void info(void)
         "\"protocol\":1,\"layout\":1,\"capacity\":%lu,\"camera\":%u,"
         "\"phase\":%u,\"pairing_code\":%u,\"recording\":%u,\"recording_valid\":%u,\"command_pending\":%u,"
         "\"saving\":%u,\"battery\":%u,\"battery_valid\":%u,\"storage_error\":%d,"
-        "\"pending_verify\":%u,\"updating\":%u,\"offset\":%lu,\"elf_sha256\":\"%s\"}",
+        "\"pending_verify\":%u,\"updating\":%u,\"offset\":%lu,\"elf_sha256\":\"%s\","
+        "\"settings_raw\":%lu,\"saved_settings_raw\":%lu,\"user_mode_id\":%u,\"osd_lines\":%u,"
+        "\"osd_owned_lines\":%u,\"led_percent\":%u,\"low_battery_percent\":%u,\"link_paused\":%u}",
         app->project_name, app->version, (unsigned long)(next ? next->size : 0),
         (unsigned)s_camera, (unsigned)state.phase, state.pairing_code,
         state.recording, state.recording_valid, state.command_pending, state.saving, state.snapshot.battery,
         state.battery_valid, s_storage, status == ESP_OTA_IMG_PENDING_VERIFY,
-        s_updating, (unsigned long)s_offset, elf_sha);
+        s_updating, (unsigned long)s_offset, elf_sha,
+        (unsigned long)rr_settings_encode(&s_settings), (unsigned long)rr_settings_encode(&s_saved_settings),
+        s_settings.user_mode_id, s_settings.osd_lines, s_settings.owns_extra_lines ? 4 : 2,
+        s_settings.led_percent, s_settings.low_battery_percent, s_settings.link_paused);
     if (n > 0 && n < RR_PAYLOAD_MAX - 4) s_reply.length = (uint16_t)(n + 4);
 }
 static esp_err_t begin_update(const rr_packet_t *p)
@@ -168,7 +204,8 @@ static esp_err_t execute(const rr_packet_t *p)
 {
     if (s_updating && p->command != RR_DATA && p->command != RR_END &&
         p->command != RR_ABORT && p->command != RR_INFO) return ESP_ERR_INVALID_STATE;
-    if (p->command != RR_SET_CAMERA && p->command != RR_BEGIN && p->command != RR_DATA && p->length)
+    if (p->command != RR_SET_CAMERA && p->command != RR_SET_SETTINGS &&
+        p->command != RR_BEGIN && p->command != RR_DATA && p->length)
         return ESP_ERR_INVALID_SIZE;
     switch (p->command) {
     case RR_HELLO: case RR_INFO: info(); return ESP_OK;
@@ -186,8 +223,15 @@ static esp_err_t execute(const rr_packet_t *p)
         return err;
     }
     case RR_PAIR:
+        if (s_settings.link_paused || s_saved_settings.link_paused) return ESP_ERR_INVALID_STATE;
         if (s_committed || camera_busy()) return ESP_ERR_INVALID_STATE;
         return camera_controller_request_pairing();
+    case RR_SET_SETTINGS: {
+        rr_settings_t candidate;
+        if (p->length != 4) return ESP_ERR_INVALID_SIZE;
+        if (!rr_settings_decode(rr_u32(p->payload), &candidate)) return ESP_ERR_INVALID_ARG;
+        return save_settings(candidate);
+    }
     case RR_BEGIN: return begin_update(p);
     case RR_DATA: return update_data(p);
     case RR_END: return end_update();
@@ -241,6 +285,12 @@ void management_feed(uint8_t byte)
 void management_tick(void)
 {
     atomic_store(&s_serviced, true);
+    /* NVS is owned by this UART task; BOOT only queues a request. */
+    if (!management_active() && atomic_exchange(&s_resume_requested, false)) {
+        rr_settings_t candidate = s_saved_settings;
+        candidate.link_paused = false;
+        if (s_settings.link_paused && save_settings(candidate) == ESP_OK) esp_restart();
+    }
     if (management_active() && esp_timer_get_time() - s_activity > 30000000) {
         abort_update();
         // Once committed, reboot into the verified image even if the final ACK was lost.

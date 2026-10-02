@@ -222,9 +222,143 @@ static bool indicator_tests(void)
     return true;
 }
 
+static bool settings_tests(void)
+{
+    rr_settings_t original = rr_settings_defaults(40), decoded = original;
+    CHECK(rr_settings_encode(&original) == 0x01000050U);
+    CHECK(!rr_settings_decode(0, &decoded));
+    CHECK(!rr_settings_decode(0x02000050U, &decoded));
+    CHECK(!rr_settings_decode(0x01000050U | (1U << 19), &decoded));
+    CHECK(!rr_settings_decode(0x01000000U, &decoded)); // Cannot turn LED off.
+    CHECK(!rr_settings_decode(0x01000054U, &decoded)); // Four lines require ownership.
+    CHECK(rr_settings_encode(&decoded) == rr_settings_encode(&original));
+    const uint8_t brightness[] = {1, 5, 25, 100};
+    const uint8_t thresholds[] = {0, 1, 20, 99, 100};
+    for (unsigned user = 40; user <= 43; ++user)
+        for (unsigned layout = 2; layout <= 4; layout += 2)
+            for (unsigned b = 0; b < sizeof(brightness); ++b)
+                for (unsigned t = 0; t < sizeof(thresholds); ++t)
+                    for (unsigned pause = 0; pause <= 1; ++pause) {
+                        rr_settings_t settings = {.user_mode_id = (uint8_t)user,
+                            .osd_lines = (uint8_t)layout, .owns_extra_lines = layout == 4,
+                            .led_percent = brightness[b], .low_battery_percent = thresholds[t],
+                            .link_paused = pause != 0};
+                        CHECK(rr_settings_decode(rr_settings_encode(&settings), &decoded));
+                        CHECK(decoded.user_mode_id == user && decoded.osd_lines == layout &&
+                            decoded.led_percent == brightness[b] && decoded.low_battery_percent == thresholds[t] &&
+                            decoded.link_paused == settings.link_paused && decoded.owns_extra_lines == settings.owns_extra_lines);
+                    }
+    original.user_mode_id = 39; CHECK(!rr_settings_valid(&original));
+    original = rr_settings_defaults(40); original.led_percent = 101;
+    CHECK(!rr_settings_valid(&original));
+    original = rr_settings_defaults(40); original.low_battery_percent = 101;
+    CHECK(!rr_settings_valid(&original));
+    return true;
+}
+
+static bool configured_osd_tests(void)
+{
+    camera_controller_state_t c = camera_ready();
+    rr_settings_t settings = rr_settings_defaults(40);
+    bf_osd_state_t state = {0};
+    char lines[4][17];
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!strcmp(lines[0], "CAM STANDBY") && !strcmp(lines[1], "CAM BAT 53%"));
+    CHECK(!lines[2][0] && !lines[3][0]);
+    settings.osd_lines = 4; settings.owns_extra_lines = true;
+    c.recording = true;
+    c.snapshot.valid = true;
+    c.snapshot.record_time = 12; c.snapshot.record_time_valid = true;
+    c.snapshot.remain_time = 90; c.snapshot.remain_time_valid = true;
+    c.snapshot.remain_capacity = 128000; c.snapshot.remain_capacity_valid = true;
+    strcpy(c.snapshot.parameters, "4K 16:9 60"); c.snapshot.parameters_valid = true;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!strcmp(lines[0], "CAM REC 00:12"));
+    CHECK(!strcmp(lines[1], "B53% R01:30"));
+    CHECK(!strcmp(lines[2], "4K 16:9 60") && !strcmp(lines[3], "SD 128000MB"));
+    c.snapshot.record_time = UINT16_MAX; c.snapshot.remain_time = UINT32_MAX;
+    c.snapshot.remain_capacity = UINT32_MAX;
+    memset(c.snapshot.parameters, 'A', sizeof(c.snapshot.parameters));
+    c.snapshot.parameters[1] = '\n';
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!strcmp(lines[0], "CAM REC 18:12:15"));
+    CHECK(!strcmp(lines[1], "B53% R1193046H"));
+    CHECK(!strcmp(lines[3], "SD 4294967295MB"));
+    CHECK(strlen(lines[2]) == 16 && lines[2][1] == '?');
+    for (unsigned i = 0; i < 4; ++i) CHECK(strlen(lines[i]) <= 16);
+    c.command_pending = true;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!strcmp(lines[0], "CAM REC")); // Do not present a timer while status changes.
+    c.command_pending = false;
+    c.snapshot.valid = false;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!strcmp(lines[0], "CAM REC") && !strcmp(lines[1], "CAM BAT 53%"));
+    CHECK(!strcmp(lines[2], "CAM SETTINGS --") && !strcmp(lines[3], "SD --"));
+    c.snapshot.valid = true; c.snapshot.record_time = 0; c.snapshot.remain_capacity = 0;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!strcmp(lines[0], "CAM REC 00:00") && !strcmp(lines[3], "SD 0MB"));
+    c.snapshot.record_time_valid = c.snapshot.remain_time_valid = false;
+    c.snapshot.remain_capacity_valid = c.snapshot.parameters_valid = false;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!strcmp(lines[0], "CAM REC") && !strcmp(lines[3], "SD --"));
+
+    settings.low_battery_percent = 20; c.snapshot.battery = 20;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(state.low_battery && !strcmp(lines[1], "LOW BAT 20%") && !strcmp(lines[0], "CAM REC"));
+    c.snapshot.battery = 22;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(state.low_battery);
+    c.snapshot.battery = 23;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!state.low_battery);
+    c.snapshot.battery = 0;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(state.low_battery && !strcmp(lines[1], "LOW BAT 0%"));
+    c.battery_valid = false;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!state.low_battery && !strcmp(lines[1], "CAM BAT --"));
+    c.battery_valid = true; c.phase = CAMERA_PHASE_RECONNECTING;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!state.low_battery && !strcmp(lines[0], "CAM NO LINK"));
+    c.phase = CAMERA_PHASE_READY; settings.low_battery_percent = 0;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!state.low_battery && !strcmp(lines[1], "CAM BAT 0%"));
+    settings.low_battery_percent = 99; c.snapshot.battery = 99;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(state.low_battery);
+    c.snapshot.battery = 100;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!state.low_battery); // Recovery is capped at the camera's maximum.
+    settings.low_battery_percent = 100;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(state.low_battery); // A 100% threshold intentionally warns at every valid value.
+    settings.low_battery_percent = 0;
+    settings.osd_lines = 2;
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    CHECK(!lines[2][0] && !lines[3][0]); // Clear four-line history.
+    settings.link_paused = true;
+    memset(lines, 'x', sizeof(lines));
+    bf_camera_osd_configured(&c, &settings, &state, lines);
+    for (unsigned i = 0; i < 4; ++i) CHECK(!lines[i][0]);
+    c.phase = CAMERA_PHASE_LINK_PAUSED;
+    CHECK(status_indicator_select(&c) == INDICATOR_PAUSED);
+    for (unsigned percent = 1; percent <= 100; ++percent) {
+        indicator_rgb_t pixel = status_indicator_brightness(status_indicator_pixel(INDICATOR_PAUSED, 0), (uint8_t)percent);
+        CHECK(!pixel.red && !pixel.green && pixel.blue > 0);
+        pixel = status_indicator_brightness(status_indicator_pixel(INDICATOR_UNCERTAIN, 0), (uint8_t)percent);
+        CHECK(pixel.red > 0 && pixel.green > 0 && !pixel.blue && pixel.red >= pixel.green);
+        pixel = status_indicator_brightness(status_indicator_pixel(INDICATOR_RECORDING, 1500), (uint8_t)percent);
+        CHECK(!pixel.red && !pixel.green && !pixel.blue);
+    }
+    indicator_rgb_t pixel = status_indicator_brightness(status_indicator_pixel(INDICATOR_CONNECTED, 0), 5);
+    CHECK(pixel.green == 12); // Old brightness preserved.
+    return true;
+}
+
 int main(void)
 {
-    if (!codec_tests() || !status_tests() || !policy_tests() || !osd_tests() || !indicator_tests()) return 1;
+    if (!codec_tests() || !status_tests() || !policy_tests() || !osd_tests() || !indicator_tests() ||
+        !settings_tests() || !configured_osd_tests()) return 1;
     printf("PASS: %u checks (codec, mode mapping, failsafe, 20 switch cycles, OSD, LED patterns)\n", checks);
     return 0;
 }

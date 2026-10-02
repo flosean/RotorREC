@@ -76,10 +76,13 @@ static void bridge_task(void *argument)
     bool connected = false;
     bool map_valid = false;
     bool osd_supported = true;
-    bool osd_acked[2] = {false, false};
-    bool osd_attempted[2] = {false, false};
-    uint32_t osd_attempt_ms[2] = {0};
-    char osd_sent[2][17] = {{0}};
+    const rr_settings_t *settings = management_settings();
+    unsigned osd_count = settings->owns_extra_lines ? 4 : 2;
+    bool osd_acked[4] = {0};
+    bool osd_attempted[4] = {0};
+    uint32_t osd_attempt_ms[4] = {0};
+    char osd_sent[4][17] = {{0}};
+    bf_osd_state_t osd_state = {0};
     bf_mode_map_t map = { .mode_bit = -1, .failsafe_bit = -1 };
     bf_record_policy_t policy = {0};
     msp_v2_reply_t reply;
@@ -120,13 +123,13 @@ static void bridge_task(void *argument)
             memset(osd_attempted, 0, sizeof(osd_attempted));
             map_ms = now_ms() - 5000;
             ESP_LOGI(TAG, "Betaflight API 1.%u connected; USER%u controls camera", api_minor,
-                     (unsigned)(CONFIG_BF_CAM_USER_MODE_ID - 39));
+                     (unsigned)(settings->user_mode_id - 39));
         }
 
         if ((uint32_t)(now_ms() - map_ms) >= 5000) {
             bf_mode_map_t next_map;
             bool next_valid = query(MSP_BOXIDS, &reply) &&
-                bf_mode_map_parse(&next_map, CONFIG_BF_CAM_USER_MODE_ID, reply.payload, reply.length);
+                bf_mode_map_parse(&next_map, settings->user_mode_id, reply.payload, reply.length);
             if (!next_valid || !map_valid || next_map.mode_bit != map.mode_bit ||
                 next_map.failsafe_bit != map.failsafe_bit) policy = (bf_record_policy_t) {0};
             map_valid = next_valid;
@@ -137,7 +140,7 @@ static void bridge_task(void *argument)
 
         bool status_ok = query(MSP_STATUS, &reply);
         bf_mode_status_t mode = {0};
-        bool input_valid = status_ok && map_valid &&
+        bool input_valid = !settings->link_paused && status_ok && map_valid &&
             bf_mode_status_parse(&map, reply.payload, reply.length, &mode) && !mode.failsafe;
         camera_controller_state_t camera;
         camera_controller_get_state(&camera);
@@ -163,9 +166,9 @@ static void bridge_task(void *argument)
         }
 
         if (connected && status_ok && osd_supported) {
-            char desired[2][17];
-            bf_camera_osd(&camera, desired);
-            for (unsigned line = 0; line < 2; ++line) {
+            char desired[4][17];
+            bf_camera_osd_configured(&camera, settings, &osd_state, desired);
+            for (unsigned line = 0; line < osd_count; ++line) {
                 if (osd_acked[line] && strcmp(desired[line], osd_sent[line]) == 0 &&
                     (uint32_t)(now_ms() - osd_attempt_ms[line]) < 5000) continue;
                 if (osd_attempted[line] && (uint32_t)(now_ms() - osd_attempt_ms[line]) < 500) continue;

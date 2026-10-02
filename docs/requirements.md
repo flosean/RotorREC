@@ -4,7 +4,7 @@ Passthrough settings and update requirements are specified in [passthrough setup
 
 # RotorREC requirements
 
-Updated: 2026-09-18.
+Updated: 2026-10-02 (1.2 development settings; hardware acceptance pending).
 
 Action 2 scope: connection and reconnection, actual recording state, start/stop control, and battery level. Recording duration and storage-capacity research are deferred and do not block this release.
 
@@ -59,7 +59,7 @@ Use only the official public Open GoPro BLE specification. The runtime-selected 
 ## Local interface
 
 - BOOT short press: toggle recording when ready.
-- BOOT hold for 1.2 seconds: scan/pair again.
+- BOOT hold for 1.2 seconds: scan/pair again, or persist resume and restart when Link Pause is active.
 - RST: hardware reset only.
 - C3 RGB: steady green for confirmed standby, slow green for recording, slow red for disconnected/failed search, fast red for discovery/pairing/reconnection, and fast yellow for unknown/pending/storage state. Unknown status must not appear green.
 - LCD: connection stage, pairing code, protocol, reconnection, recording state, settings, battery, duration, and diagnostics.
@@ -74,9 +74,12 @@ UART and OSD functionality have been tested on hardware and confirmed working by
 - Check `MSP_API_VERSION` before enabling automatic control.
 - Read `MSP_FC_VARIANT`, `MSP_BOXIDS`, and `MSP_STATUS`. AUX assignment and ranges remain in BF Modes, without a fixed raw RC channel.
 - Write native MSPv2 `MSP2_SET_TEXT (0x3007)`, types 7-10 for Custom Messages 1-4, at most 16 bytes per line.
-- Use line 1 for actual recording/connection state and line 2 for battery; leave lines 3 and 4 untouched. Update on changes and MSP reconnection, and refresh RAM text every five seconds. Never send `MSP_EEPROM_WRITE`.
+- Default to line 1 for actual recording/connection state and line 2 for battery. Optional four-line mode adds valid DJI R SDK time/settings/storage; unknown values use `--`. After opting into four lines, retain ownership of lines 3/4 and clear them in two-line mode. Fresh two-line installations leave 3/4 untouched. Update on changes/reconnection and refresh RAM text every five seconds. Never send `MSP_EEPROM_WRITE`.
 - Default to USER1 (permanent ID 40), configurable through USER4. Activation starts and deactivation stops recording; ARM is not used. Require a valid mode mapping, healthy FC state, ready camera, valid status, 200 ms debounce, and duplicate prevention.
 - Link loss must not send stop. After startup or FC/receiver recovery, require an inactive switch position before new commands. See [Betaflight setup](betaflight-setup.md) for deferred intent and OSD limitations.
+- Persist USER selection, OSD template, C3 LED percent (1-100, default 5), battery threshold (0=off, default 0) and Link Pause. Settings commit atomically as one versioned NVS key, take effect on restart and preserve camera profiles. Invalid settings/failed commits must not report success.
+- Low-battery warning replaces only the battery line, keeping recording state visible. Trigger at/below threshold; clear above threshold at threshold+3 percentage points, capped at 100, or when valid battery data is lost. A 100% threshold warns at every valid value.
+- Persistent Link Pause must skip BLE initialization, disable camera commands and blank the module's owned OSD lines. Do not send STOP or erase pairing. Reject settings/reboot while recording, saving, command pending, OTA busy or still connected with unconfirmed recording state; allow fully offline recovery. Resume restarts and re-establishes the inactive USER baseline. See [settings acceptance](camera-settings.md).
 - Never send raw RC, motor, PID, or other FC configuration commands.
 
 ## Acceptance and regression criteria

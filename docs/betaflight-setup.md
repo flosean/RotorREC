@@ -23,14 +23,14 @@ Connect GND to GND. C3 GPIO18/19 are USB pins and must not use the C6 wiring. Se
 - For initial bench tests, power the ESP32 over USB. Do not connect battery voltage to GPIO or combine supplies without checking the power circuit.
 - Select an unused FC UART and enable standard bidirectional MSP at the same baud rate. Do not share a receiver, GPS, or video transmitter UART.
 - RotorREC writes Custom Messages to the FC; the existing video transmitter/goggles OSD path stays in place. The ESP32 is not a DisplayPort video device.
-- In `menuconfig` under `RotorREC serial bridge`, configure UART enablement, pins, baud rate, and USER1-USER4 (permanent IDs 40-43). Board checks reject reserved LCD, USB, BOOT, and other protected pins.
+- In `menuconfig` under `RotorREC serial bridge`, configure UART enablement, pins, baud rate, and the initial USER1-USER4 default (permanent IDs 40-43). The 1.2 manager can save a USER override without rebuilding. Board checks reject reserved LCD, USB, BOOT, and other protected pins.
 
 ## Flight controller setup
 
 1. Enable MSP at 115200 baud on the selected UART. RotorREC checks `BTFL` and MSP API major 1, minor >=47 before controlling the camera. The target is Betaflight 2025.12 or newer.
 2. Assign **USER1** to the desired AUX range in Modes.
 3. If USER1 is missing, check PINIO/USER support and existing `pinio_box` assignments. Betaflight exposes USER modes monitored by PinioBox. Do not overwrite all assignments or repurpose existing PINIO resources; some boards use them for video transmitter power. Select an unused USER mode and match its ID in RotorREC if needed.
-4. Enable and position **Custom Message 1** and **Custom Message 2** in the OSD layout. Lines 3 and 4 are not modified.
+4. Enable and position **Custom Message 1** and **Custom Message 2** in the OSD layout. Optional four-line mode also requires 3/4. Fresh two-line setups leave 3/4 untouched; after four-line use, RotorREC continues clearing its previously owned 3/4 in two-line mode. See [camera settings](camera-settings.md).
 
 ## OSD display
 

@@ -102,3 +102,63 @@ void bf_camera_osd(const camera_controller_state_t *camera, char lines[2][17])
         snprintf(lines[1], 17, "CAM BAT --");
     }
 }
+
+static void osd_duration(uint32_t seconds, char text[10])
+{
+    if (seconds < 3600)
+        snprintf(text, 10, "%02lu:%02lu", (unsigned long)(seconds / 60), (unsigned long)(seconds % 60));
+    else if (seconds < 360000)
+        snprintf(text, 10, "%02lu:%02lu:%02lu", (unsigned long)(seconds / 3600),
+                 (unsigned long)((seconds / 60) % 60), (unsigned long)(seconds % 60));
+    else
+        snprintf(text, 10, "%luH", (unsigned long)(seconds / 3600));
+}
+
+void bf_camera_osd_configured(const camera_controller_state_t *camera,
+                             const rr_settings_t *settings, bf_osd_state_t *state,
+                             char lines[4][17])
+{
+    memset(lines, 0, 4 * 17);
+    if (settings->link_paused || camera->phase == CAMERA_PHASE_LINK_PAUSED) {
+        state->low_battery = false;
+        return;
+    }
+    bf_camera_osd(camera, lines);
+    bool connected = camera->phase == CAMERA_PHASE_READY;
+    bool battery = connected && camera->battery_valid && camera->snapshot.battery <= 100;
+    unsigned threshold = settings->low_battery_percent;
+    unsigned recovery = threshold > 97 ? 100 : threshold + 3;
+    if (!battery || !threshold) state->low_battery = false;
+    else if (camera->snapshot.battery <= threshold) state->low_battery = true;
+    else if (camera->snapshot.battery >= recovery) state->low_battery = false;
+    if (state->low_battery)
+        snprintf(lines[1], 17, "LOW BAT %u%%", (unsigned)camera->snapshot.battery);
+    if (settings->osd_lines != 4) return;
+
+    bool telemetry = connected && camera->snapshot.valid;
+    if (telemetry && camera->recording_valid && camera->recording && !camera->saving &&
+        !camera->command_pending && camera->snapshot.record_time_valid) {
+        char elapsed[10];
+        osd_duration(camera->snapshot.record_time, elapsed);
+        snprintf(lines[0], 17, "CAM REC %.8s", elapsed);
+    }
+    if (!state->low_battery && battery && telemetry && camera->snapshot.remain_time_valid) {
+        char remaining[10];
+        osd_duration(camera->snapshot.remain_time, remaining);
+        snprintf(lines[1], 17, "B%u%% R%.8s", (unsigned)camera->snapshot.battery, remaining);
+    }
+    snprintf(lines[2], 17, "CAM SETTINGS --");
+    if (telemetry && camera->snapshot.parameters_valid && camera->snapshot.parameters[0]) {
+        /* Bounded ASCII; vendor strings need not be NUL terminated. */
+        unsigned i = 0;
+        for (; i < 16 && camera->snapshot.parameters[i]; ++i) {
+            unsigned char c = (unsigned char)camera->snapshot.parameters[i];
+            lines[2][i] = c >= 32 && c <= 126 ? (char)c : '?';
+        }
+        lines[2][i] = '\0';
+    }
+    if (telemetry && camera->snapshot.remain_capacity_valid)
+        snprintf(lines[3], 17, "SD %luMB", (unsigned long)camera->snapshot.remain_capacity);
+    else
+        snprintf(lines[3], 17, "SD --");
+}

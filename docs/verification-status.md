@@ -1,8 +1,31 @@
 # RotorREC verification status
 
-Updated: 2026-09-19. Firmware version: 1.1.0 (unreleased passthrough changes).
+Updated: 2026-10-02. Firmware version: 1.2.0-dev (unreleased; new hardware acceptance pending).
 
 **The project owner confirms that Betaflight UART communication and OSD functionality have been tested on real hardware, used successfully, and work correctly.** This replaces the earlier pending-hardware status for UART and OSD. The confirmation did not include a specific FC firmware/board combination or a detailed cycle-count and fault-injection record.
+
+## 1.2 development software verification
+
+On 2026-10-02:
+
+- Implemented first-batch CamLink-inspired settings, two/four-line OSD, per-field DJI telemetry validity, optional low-battery warning and persistent Link Pause. Usage and physical acceptance are in [camera settings](camera-settings.md).
+- ESP-IDF v5.5.5 builds pass for both unified board images. C3 app: 903,616 / 2,031,616-byte slot (56% free); C6 app: 1,290,528 / 4,128,768-byte slot (69% free). These are image/partition figures, not runtime heap measurements.
+- Betaflight host suite passes 11,956 checks, including wire formatting, four-line boundaries, unknown/zero/stale fields, warning hysteresis and maximum thresholds, settings validation, paused OSD and LED brightness. This count includes loops and is not a count of independent scenarios.
+- Actual DJI R SDK adapter callbacks pass native tests for video/photo/unknown modes, seconds/MB conversion, parameter validity, malformed/maximum-length extension fields, stale/disconnected data, command invalidation, UINT32_MAX sentinels and tick wrap. Transport, clock and locks are substituted; no BLE radio is exercised.
+- GoPro packet/status/advertisement and Betaflight integration suite passes.
+- Actual management receiver passes native NVS/OTA fault injection, including new defaults/invalid storage, immutable current vs saved settings, commit failure, replayed saves, paused pairing rejection, BOOT resume and offline recovery with stale recording/saving flags. Storage/OTA are simulated; physical power-cut behavior remains unverified.
+- Fifteen Python manager tests pass for wire/settings/package/reboot handling and existing update retries. One hidden Tk regression passes using ESP-IDF Python 3.12, Tk and pyserial: connection fields stay locked through queued replies; successful status populates settings; changing connections requires a fresh read; worker exceptions restore controls. No real serial device is opened. The system Python lacks pyserial; the GUI regression used the existing configured runtime.
+- Versioned update ZIPs were generated for C3/C6, archive contents/hash/board/version were read back and compared with the final binaries. No hardware was flashed.
+
+### Standards
+
+Review covered the uncommitted implementation against baseline `83c3bf1`, repository architecture and the code-review smell baseline. One confirmed issue: GUI connection edits during a worker could apply an old status reply to a new connection. Connection/settings controls now remain locked until the FIFO completion event; the hidden Tk regression covers success and exception restoration. No remaining confirmed standards defects were found; no hard architecture violations were reported.
+
+### Spec
+
+Review used the first-batch scope in [CamLink evaluation](camlink-evaluation.md). One confirmed issue: stale recording/saving flags after a complete disconnect could block Link Pause/reboot. The busy gate now requires a live connection for those flags, still rejects pending commands and live unknown/recording/saving states, and passes offline-recovery regression. No remaining confirmed spec defects were found. Optional Wi-Fi/ARM/new-model features remain deferred.
+
+Review totals: Standards 1 finding resolved, worst was the GUI connection race; Spec 1 finding resolved, worst was blocked offline recovery. New features still require both-board BLE/OSD/power-cycle/update acceptance; the earlier owner's UART/OSD confirmation does not establish 1.2 validation.
 
 ## 1.1 software verification
 

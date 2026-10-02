@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef RR_RSDK_HOST_TEST
+#include "dji_rs_sdk_test_platform.h"
+#else
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -14,10 +17,12 @@
 #include "dji_protocol_data_structures.h"
 #include "enums_logic.h"
 #include "status_logic.h"
+#endif
 
 static portMUX_TYPE s_snapshot_mux = portMUX_INITIALIZER_UNLOCKED;
 static camera_snapshot_t s_snapshot;
 static TickType_t s_snapshot_tick;
+static TickType_t s_parameters_tick;
 
 static const char *resolution_name(uint8_t resolution)
 {
@@ -37,16 +42,16 @@ static const char *resolution_name(uint8_t resolution)
 static const char *fps_name(uint8_t fps)
 {
     switch (fps) {
-        case FPS_24: return "24fps";
-        case FPS_25: return "25fps";
-        case FPS_30: return "30fps";
-        case FPS_48: return "48fps";
-        case FPS_50: return "50fps";
-        case FPS_60: return "60fps";
-        case FPS_100: return "100fps";
-        case FPS_120: return "120fps";
-        case FPS_200: return "200fps";
-        case FPS_240: return "240fps";
+        case FPS_24: return "24";
+        case FPS_25: return "25";
+        case FPS_30: return "30";
+        case FPS_48: return "48";
+        case FPS_50: return "50";
+        case FPS_60: return "60";
+        case FPS_100: return "100";
+        case FPS_120: return "120";
+        case FPS_200: return "200";
+        case FPS_240: return "240";
         default: return "--";
     }
 }
@@ -78,8 +83,23 @@ static void camera_status_callback(void *data)
         s_snapshot.record_time = status->record_time;
         s_snapshot.remain_time = status->remain_time;
         s_snapshot.remain_capacity = status->remain_capacity;
+        /* Photo/burst fields use different units; unknown modes remain unknown. */
+        bool video = status->camera_mode == CAMERA_MODE_NORMAL ||
+                     status->camera_mode == CAMERA_MODE_SLOW_MOTION ||
+                     status->camera_mode == CAMERA_MODE_TIMELAPSE ||
+                     status->camera_mode == CAMERA_MODE_HYPERLAPSE ||
+                     status->camera_mode == CAMERA_MODE_SUPERNIGHT;
+        s_snapshot.record_time_valid = video;
+        s_snapshot.remain_time_valid = video && status->remain_time != UINT32_MAX;
+        s_snapshot.remain_capacity_valid = status->remain_capacity != UINT32_MAX;
+        /* Only normal video FPS has the meanings represented by this formatter. */
+        s_snapshot.parameters_valid = (status->camera_mode == CAMERA_MODE_NORMAL ||
+            status->camera_mode == CAMERA_MODE_SUPERNIGHT) &&
+            strcmp(resolution_name(status->video_resolution), "--") != 0 &&
+            strcmp(fps_name(status->fps_idx), "--") != 0;
+        s_parameters_tick = s_snapshot_tick;
         snprintf(s_snapshot.mode, sizeof(s_snapshot.mode), "%s", mode_name(status->camera_mode));
-        snprintf(s_snapshot.parameters, sizeof(s_snapshot.parameters), "%s / %s",
+        snprintf(s_snapshot.parameters, sizeof(s_snapshot.parameters), "%s %s",
                  resolution_name(status->video_resolution), fps_name(status->fps_idx));
         portEXIT_CRITICAL(&s_snapshot_mux);
     }
@@ -97,6 +117,9 @@ static void new_camera_status_callback(void *data)
         s_snapshot.mode[name_length] = '\0';
         memcpy(s_snapshot.parameters, status->mode_param, parameter_length);
         s_snapshot.parameters[parameter_length] = '\0';
+        s_snapshot.parameters_valid = status->type_mode_name == 1 && status->type_mode_param == 2 &&
+            status->mode_param_length > 0 && status->mode_param_length <= 20;
+        s_parameters_tick = xTaskGetTickCount();
         portEXIT_CRITICAL(&s_snapshot_mux);
     }
     update_new_camera_state_handler(data);
@@ -169,6 +192,12 @@ void dji_rs_sdk_get_snapshot(camera_snapshot_t *snapshot)
     *snapshot = s_snapshot;
     snapshot->valid = snapshot->valid &&
         (TickType_t)(xTaskGetTickCount() - s_snapshot_tick) < pdMS_TO_TICKS(5000);
+    snapshot->parameters_valid = snapshot->parameters_valid &&
+        (TickType_t)(xTaskGetTickCount() - s_parameters_tick) < pdMS_TO_TICKS(5000);
     portEXIT_CRITICAL(&s_snapshot_mux);
     if (connect_logic_get_state() != PROTOCOL_CONNECTED) snapshot->valid = false;
+    if (!snapshot->valid) {
+        snapshot->record_time_valid = snapshot->remain_time_valid = false;
+        snapshot->remain_capacity_valid = snapshot->parameters_valid = false;
+    }
 }

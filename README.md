@@ -4,18 +4,19 @@
 
 RotorREC connects an action camera to your FPV setup. An ESP32 communicates with the camera over BLE, reads a Betaflight USER mode over UART/MSPv2, controls recording, and sends actual camera status and battery level to the OSD.
 
-Current firmware version: **1.1.0 (hardware validation pending)**. **Betaflight UART communication and OSD functionality have been tested on real hardware and confirmed working by the project owner.**
+Current firmware version: **1.2.0-dev (new features pending hardware validation)**. **Earlier Betaflight UART communication and OSD functionality have been tested on real hardware and confirmed working by the project owner.**
 
 ## Features
 
 - Betaflight passthrough manager: select Action 2 / DJI R SDK / GoPro, pair cameras, and update over the existing UART using dual app slots and rollback. See [passthrough setup](docs/passthrough.md); new functionality is not yet hardware-validated.
-
+- Saved USER1-USER4 selection, two/four OSD lines, C3 LED brightness and optional low-battery warning. Four-line DJI R SDK telemetry uses individually validated camera fields. See [camera settings](docs/camera-settings.md).
+- Persistent Link Pause retains pairing, disables BLE and clears the owned camera OSD lines. Resume from the manager or by holding BOOT for 1.2 seconds.
 - DJI Action 2 legacy BLE/DUML: pairing, saved camera profiles, automatic reconnection, recording control, actual recording state, and battery level.
 - DJI public R SDK: a separate protocol path for Action 4; connection, recording control, and recording settings were verified in an earlier hardware revision.
 - GoPro official Open GoPro BLE: runtime-selectable pairing, saved target, reconnection, video start/stop, actual encoding status, battery, and keepalive. Hardware validation is pending; see [GoPro setup](docs/gopro.md).
 - Betaflight USER1-USER4 recording control. USER1 is the default; assign the AUX channel and switch range in Betaflight Modes.
-- OSD Custom Message 1 for camera status and Custom Message 2 for camera battery level.
-- Short-press BOOT to toggle recording; hold for 1.2 seconds to scan and pair again.
+- OSD Custom Messages 1/2 for camera status/battery by default; optional 3/4 for recording settings/storage. Action 2 and GoPro extra fields remain unavailable.
+- Short-press BOOT to toggle recording; hold for 1.2 seconds to scan and pair again, or resume when Link Pause is active.
 - ESP32-C3-Zero RGB status indicator or ESP32-C6-LCD-1.47 display interface.
 
 ## Support status
@@ -28,6 +29,7 @@ Current firmware version: **1.1.0 (hardware validation pending)**. **Betaflight 
 | ESP32-C6-LCD-1.47 | LCD verified previously; current-version hardware regression remains open |
 | Betaflight UART and OSD | Tested on real hardware and confirmed working by the project owner |
 | GoPro | Official Open GoPro BLE adapter implemented; hardware compatibility and functional validation pending |
+| 1.2 settings, four-line OSD, warnings and Link Pause | Implemented; host tests and both board builds pass; current-version hardware acceptance remains pending |
 
 See [verification status](docs/verification-status.md) for evidence and remaining checks.
 
@@ -69,6 +71,23 @@ Replace `PORT` with your serial port. Use separate build directories for the two
 
 Action 2 is the default. Select DJI R SDK or GoPro with the [passthrough manager](docs/passthrough.md); changing the selection restarts the ESP. Version 1.0 installations require one USB installation of the new bootloader, partition table and application before passthrough updates work.
 
+## Camera settings and Link Pause
+
+The manager requires Python 3.10+ with pyserial 3.5; the GUI also uses tkinter:
+
+```sh
+python -m pip install pyserial==3.5
+python tools/rotorrec_manager.py gui
+```
+
+Connect to the FC USB port, close Betaflight Configurator, and choose **Read status** before editing settings. **Save settings & restart** saves USER1-USER4, two/four OSD lines, C3 LED brightness (1-100%) and the camera low-battery threshold (0=off). Defaults are two OSD lines, 5% LED brightness and warnings off. Configure the matching USER mode and Custom Message elements in Betaflight.
+
+Four-line mode adds confirmed DJI R SDK recording/remaining time, resolution/FPS and capacity. Unknown or stale fields show `--`; Action 2 and GoPro extra telemetry remains unavailable. After four-line mode has been enabled, switching back to two lines clears Messages 3/4; the module retains ownership of those lines.
+
+**Pause camera link** saves Link Pause and restarts without initializing BLE. Pairing is retained across power cycles. Resume in the manager or hold BOOT for 1.2 seconds. Settings changes are rejected while the connected camera is recording, saving, awaiting a command or has unconfirmed recording status. After maintenance, power-cycle the **FC** to leave passthrough and restore OSD/USER control.
+
+See [camera settings and acceptance](docs/camera-settings.md) for CLI commands and behavior, and [passthrough setup](docs/passthrough.md) for firmware update packages. Existing 1.1 dual-slot installations can update to 1.2 without another layout migration.
+
 ## Project layout
 
 ```text
@@ -76,7 +95,7 @@ main/
   app_main.c       Startup and main loop
   camera/          Shared camera state and control; separate DJI and GoPro adapters
   betaflight/      MSPv2, USER mode policy, UART, and OSD
-  management/      Framing, camera selection, UART update receiver
+  management/      Framing, saved settings, camera selection, UART update receiver
   platform/        Button, LCD, and RGB hardware interfaces
   ui/              Display, headless logging, and status indication
 components/        Required DJI and Waveshare components
@@ -98,10 +117,14 @@ On Windows, install Visual Studio C++ Build Tools and run:
 ```powershell
 .\tools\test-betaflight.ps1
 .\tools\test-gopro.ps1
+.\tools\test-dji.ps1
 .\tools\test-management.ps1
+python tests/test_manager_gui.py
 ```
 
-Tests cover MSP framing and parsing, USER control policy, OSD text, and LED state and color serialization. The initial release passed 10,971 checks and clean builds for both boards. Hardware verification is tracked separately.
+Tests cover MSP framing, USER policy, two/four-line OSD, LED brightness, actual DJI telemetry callbacks and management storage/update failures. The GUI test requires Python with tkinter and pyserial. Current results and hardware acceptance are tracked in [verification status](docs/verification-status.md).
+
+On 2026-10-02, 11,956 Betaflight checks, 15 Python manager tests, the hidden Tk GUI regression, DJI callback tests and GoPro/management suites passed. Both ESP-IDF v5.5.5 board builds passed. These software results do not establish BLE radio behavior, physical OSD output or power-cut recovery of the new features.
 
 ## Documentation and licensing
 

@@ -6,7 +6,7 @@
 #define RR_PAYLOAD_MAX 1040
 #define RR_FRAME_MAX (RR_PAYLOAD_MAX + 20)
 enum { RR_HELLO = 1, RR_INFO, RR_SET_CAMERA, RR_PAIR, RR_BEGIN, RR_DATA,
-       RR_END, RR_ABORT, RR_REBOOT, RR_EXIT };
+       RR_END, RR_ABORT, RR_REBOOT, RR_EXIT, RR_SET_SETTINGS };
 typedef struct {
     uint8_t command;
     uint32_t session, sequence;

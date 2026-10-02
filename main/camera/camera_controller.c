@@ -266,6 +266,12 @@ static void auto_connect_task(void *argument)
 esp_err_t camera_controller_init(void)
 {
     s_selected = management_camera();
+    if (management_settings()->link_paused) {
+        s_protocol = s_selected;
+        s_phase = CAMERA_PHASE_LINK_PAUSED;
+        /* BLE is deliberately never initialized; saved profiles remain intact. */
+        return ESP_OK;
+    }
     if (s_selected == CAMERA_PROTOCOL_DJI_ACTION2) s_pairing_code = 5160;
     if (s_selected == CAMERA_PROTOCOL_GOPRO) {
         esp_err_t result = gopro_init();
@@ -353,6 +359,10 @@ void camera_controller_get_state(camera_controller_state_t *state)
     if (state == NULL) {
         return;
     }
+    if (management_settings()->link_paused) {
+        *state = (camera_controller_state_t){.protocol = s_selected, .phase = CAMERA_PHASE_LINK_PAUSED};
+        return;
+    }
     if (!s_initialized) { *state = (camera_controller_state_t){0}; return; }
     if (s_selected == CAMERA_PROTOCOL_GOPRO) { gopro_get_state(state); return; }
     *state = (camera_controller_state_t) {
@@ -361,6 +371,7 @@ void camera_controller_get_state(camera_controller_state_t *state)
         .pairing_code = s_pairing_code,
         .last_command_result = s_last_command_result,
         .command_pending = s_command_busy || s_pair_queued,
+        .link_connected = s_ble_profile.connection_status.is_connected,
     };
 
     dji_rs_sdk_get_snapshot(&state->snapshot);

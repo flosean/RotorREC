@@ -19,6 +19,7 @@ typedef int esp_err_t;
 #define OTA_WITH_SEQUENTIAL_WRITES 0xfffffffe
 #define UART_NUM_1 1
 #define pdMS_TO_TICKS(n) (n)
+#define CONFIG_BF_CAM_USER_MODE_ID 40
 typedef unsigned nvs_handle_t;
 #define NVS_READONLY 0
 #define NVS_READWRITE 1

@@ -6,9 +6,11 @@
 #endif
 #include "camera/camera_types.h"
 #include "protocol.h"
+#include "settings.h"
 
 esp_err_t management_init(void);
 camera_protocol_t management_camera(void);
+const rr_settings_t *management_settings(void);
 bool management_active(void);
 bool management_healthy(void);
 bool management_take_control_reset(void);

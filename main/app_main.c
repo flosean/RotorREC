@@ -61,7 +61,7 @@ void app_main(void)
     if (led_result != ESP_OK) ESP_LOGE(TAG, "Status LED initialization failed: %s", esp_err_to_name(led_result));
 #endif
 
-    if (camera_controller_init() != ESP_OK) {
+    if (storage_result != ESP_OK || camera_controller_init() != ESP_OK) {
         ESP_LOGE(TAG, "Camera controller initialization failed");
     } else {
         camera_controller_start();
@@ -80,6 +80,7 @@ void app_main(void)
         headless_status_refresh(&state);
         indicator_rgb_t pixel = status_indicator_pixel(status_indicator_select(&state),
                                                         (uint32_t)(esp_timer_get_time() / 1000));
+        pixel = status_indicator_brightness(pixel, management_settings()->led_percent);
         status_led_set_rgb(pixel.red, pixel.green, pixel.blue);
 #endif
         vTaskDelay(pdMS_TO_TICKS(50));

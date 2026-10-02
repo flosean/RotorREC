@@ -158,6 +158,7 @@ static void phase(camera_phase_t value)
         s_state.battery_valid = false;
         s_state.snapshot.valid = false;
     }
+    s_state.link_connected = s_connected;
     portEXIT_CRITICAL(&s_mux);
 }
 
@@ -262,6 +263,7 @@ static void disconnect_camera(void)
         while (s_connected && next_event(&event, deadline)) {}
     }
     s_connected = false;
+    phase(CAMERA_PHASE_RECONNECTING);
     for (unsigned i = 0; i < 4; ++i) {
         if (s_notify[i]) esp_ble_gattc_unregister_for_notify(s_interface, s_address, s_notify[i]);
         s_notify[i] = s_write[i] = 0;
@@ -305,6 +307,7 @@ static bool connect_camera(void)
     }
     s_conn = event.conn;
     s_connected = true;
+    phase(CAMERA_PHASE_VERIFYING); /* Publish the live BLE link before session setup. */
     if (esp_ble_set_encryption(s_address, ESP_BLE_SEC_ENCRYPT) != ESP_OK ||
         !wait_event(EV_AUTH, 0, 20000, &event)) {
         phase(CAMERA_PHASE_PAIR_REJECTED);
@@ -387,6 +390,7 @@ static bool poll_status(void)
     portENTER_CRITICAL(&s_mux);
     s_status_tick = xTaskGetTickCount();
     s_state.phase = CAMERA_PHASE_READY;
+    s_state.link_connected = true;
     s_state.recording = status.encoding;
     /* A shutter in photo/timelapse mode is not a video recording request. */
     s_state.recording_valid = status.preset_group == GOPRO_PRESET_GROUP_VIDEO;

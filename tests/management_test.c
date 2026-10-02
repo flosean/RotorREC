@@ -9,7 +9,8 @@ static uint8_t flash[4096], response[RR_FRAME_MAX];
 static size_t written, response_size;
 static unsigned writes, switches, restarts, aborts, pairs, commits;
 static esp_err_t fail_write, fail_end, fail_switch, fail_commit;
-static uint32_t saved_camera;
+static esp_err_t fail_set, fail_open, fail_get;
+static uint32_t saved_camera, saved_settings, staged_camera, staged_settings;
 static camera_controller_state_t camera;
 static esp_partition_t running = {4096}, spare = {4096};
 static esp_app_desc_t app = {.magic_word = ESP_APP_DESC_MAGIC_WORD,
@@ -34,15 +35,30 @@ void mbedtls_sha256_free(mbedtls_sha256_context *c) {
 }
 esp_err_t nvs_flash_init(void) { return ESP_OK; }
 esp_err_t nvs_open(const char *name, int mode, nvs_handle_t *handle) {
-    (void)name; (void)mode; *handle = 1; return ESP_OK;
+    assert(strcmp(name, "rotorrec") == 0);
+    if (fail_open) return fail_open;
+    if (mode == NVS_READWRITE) { staged_camera = saved_camera; staged_settings = saved_settings; }
+    *handle = 1; return ESP_OK;
 }
 esp_err_t nvs_get_u32(nvs_handle_t h, const char *name, uint32_t *value) {
-    (void)h; (void)name; *value = saved_camera; return saved_camera ? ESP_OK : ESP_ERR_NVS_NOT_FOUND;
+    (void)h;
+    if (fail_get) return fail_get;
+    assert(!strcmp(name, "camera_v1") || !strcmp(name, "settings_v1"));
+    *value = !strcmp(name, "camera_v1") ? saved_camera : saved_settings;
+    return *value ? ESP_OK : ESP_ERR_NVS_NOT_FOUND;
 }
 esp_err_t nvs_set_u32(nvs_handle_t h, const char *name, uint32_t value) {
-    (void)h; (void)name; if (!fail_commit) saved_camera = value; return ESP_OK;
+    (void)h;
+    if (fail_set) return fail_set;
+    if (!strcmp(name, "camera_v1")) staged_camera = value;
+    else { assert(!strcmp(name, "settings_v1")); staged_settings = value; }
+    return ESP_OK;
 }
-esp_err_t nvs_commit(nvs_handle_t h) { (void)h; ++commits; return fail_commit; }
+esp_err_t nvs_commit(nvs_handle_t h) {
+    (void)h; ++commits;
+    if (!fail_commit) { saved_camera = staged_camera; saved_settings = staged_settings; }
+    return fail_commit;
+}
 void nvs_close(nvs_handle_t h) { (void)h; }
 const esp_app_desc_t *esp_app_get_description(void) { return &app; }
 const esp_partition_t *esp_ota_get_next_update_partition(const void *unused) { (void)unused; return &spare; }
@@ -98,6 +114,8 @@ static void reset(void)
     camera = (camera_controller_state_t){0};
     writes = switches = restarts = aborts = pairs = commits = 0;
     fail_write = fail_end = fail_switch = fail_commit = 0;
+    fail_set = fail_open = fail_get = 0;
+    atomic_store(&s_resume_requested, false);
     assert(management_init() == ESP_OK);
     request = (rr_packet_t){.command = RR_HELLO, .session = 123};
     assert(transact() == ESP_OK && management_active());
@@ -129,6 +147,91 @@ static void transfer(void)
     chunk(0, 1024); assert(transact() == ESP_OK);
     assert(transact() == ESP_OK && writes == 1); // Lost ACK replay must not rewrite flash.
     chunk(1024, 512); assert(transact() == ESP_OK);
+}
+
+static void settings_tests(void)
+{
+    saved_camera = saved_settings = 0;
+    reset();
+    assert(rr_settings_encode(management_settings()) == 0x01000050U);
+    assert(strstr((char *)s_reply.payload + 4, "\"settings_raw\":16777296"));
+    rr_settings_t settings = rr_settings_defaults(43);
+    settings.osd_lines = 4; settings.owns_extra_lines = true;
+    settings.led_percent = 25; settings.low_battery_percent = 20; settings.link_paused = true;
+    uint32_t expected = rr_settings_encode(&settings);
+    command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, expected);
+    assert(transact() == ESP_OK && saved_settings == expected && commits == 1);
+    assert(transact() == ESP_OK && commits == 1); // ACK loss must not write NVS twice.
+    assert(!management_settings()->link_paused); // Immutable until restart.
+    command(RR_PAIR); assert(transact() == ESP_ERR_INVALID_STATE && pairs == 0);
+    command(RR_INFO); assert(transact() == ESP_OK && s_reply.length > 4);
+    assert(rr_settings_encode(&s_saved_settings) == expected);
+    assert(management_init() == ESP_OK && management_settings()->link_paused);
+    command(RR_PAIR); assert(transact() == ESP_ERR_INVALID_STATE);
+    command(RR_EXIT); assert(transact() == ESP_OK);
+    fail_commit = ESP_FAIL;
+    management_button_pair(); management_tick();
+    assert(restarts == 0 && saved_settings == expected);
+    fail_commit = ESP_OK;
+    management_button_pair(); management_tick();
+    assert(restarts == 1 && pairs == 0);
+    settings.link_paused = false;
+    assert(saved_settings == rr_settings_encode(&settings));
+    assert(management_init() == ESP_OK && !management_settings()->link_paused);
+
+    reset();
+    /* A two-line save cannot abandon ownership and leave old lines behind. */
+    settings.osd_lines = 2; settings.owns_extra_lines = false;
+    command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, rr_settings_encode(&settings));
+    assert(transact() == ESP_OK && s_saved_settings.owns_extra_lines);
+    uint32_t previous = saved_settings;
+    command(RR_SET_SETTINGS); request.length = 3;
+    assert(transact() == ESP_ERR_INVALID_SIZE && saved_settings == previous);
+    command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, previous | (1U << 19));
+    assert(transact() == ESP_ERR_INVALID_ARG && saved_settings == previous);
+    const camera_controller_state_t blocked[] = {
+        {.recording = true, .link_connected = true}, {.saving = true, .link_connected = true},
+        {.command_pending = true},
+        {.phase = CAMERA_PHASE_READY},
+        {.phase = CAMERA_PHASE_VERIFYING, .link_connected = true},
+        {.phase = CAMERA_PHASE_WAITING_STATUS, .link_connected = true},
+    };
+    for (unsigned i = 0; i < sizeof(blocked) / sizeof(blocked[0]); ++i) {
+        camera = blocked[i];
+        command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, previous);
+        assert(transact() == ESP_ERR_INVALID_STATE && saved_settings == previous);
+        command(RR_REBOOT); assert(transact() == ESP_ERR_INVALID_STATE);
+    }
+    camera = (camera_controller_state_t){0}; // Offline is available for recovery.
+    fail_open = ESP_FAIL;
+    command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, previous);
+    assert(transact() == ESP_FAIL && saved_settings == previous);
+    fail_open = 0; fail_set = ESP_FAIL;
+    command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, previous);
+    assert(transact() == ESP_FAIL && saved_settings == previous);
+    fail_set = 0; fail_commit = ESP_FAIL;
+    settings.low_battery_percent = 50;
+    command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, rr_settings_encode(&settings));
+    assert(transact() == ESP_FAIL && saved_settings == previous);
+    assert(rr_settings_encode(&s_saved_settings) == previous);
+    fail_commit = 0;
+    /* Last-known recording/saving after BLE loss must not block offline pause/recovery. */
+    camera = (camera_controller_state_t){.phase = CAMERA_PHASE_RECONNECTING,
+        .recording = true, .saving = true, .recording_valid = false, .link_connected = false};
+    command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, previous);
+    assert(transact() == ESP_OK);
+    command(RR_REBOOT); assert(transact() == ESP_OK);
+    begin(); assert(transact() == ESP_OK);
+    command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, previous);
+    assert(transact() == ESP_ERR_INVALID_STATE);
+    command(RR_ABORT); assert(transact() == ESP_OK);
+
+    saved_settings = 0x02000050U;
+    assert(management_init() == ESP_ERR_INVALID_STATE);
+    saved_settings = 0; fail_get = ESP_FAIL;
+    assert(management_init() == ESP_FAIL);
+    fail_get = 0;
+    assert(management_init() == ESP_OK);
 }
 int main(void)
 {
@@ -166,7 +269,8 @@ int main(void)
     assert(management_init() == ESP_OK && management_camera() == CAMERA_PROTOCOL_GOPRO);
     fail_commit = ESP_FAIL; command(RR_SET_CAMERA); request.length = 1; request.payload[0] = 2;
     assert(transact() == ESP_FAIL && saved_camera == 3);
-    reset(); camera.recording = true; begin(); assert(transact() != ESP_OK && !s_updating);
+    reset(); camera.recording = true; camera.link_connected = true;
+    begin(); assert(transact() != ESP_OK && !s_updating);
     reset(); camera.command_pending = true; begin(); assert(transact() != ESP_OK);
     reset(); begin(); request.payload[8] ^= 1; assert(transact() != ESP_OK);
     reset(); begin(); rr_put32(request.payload, 4097); assert(transact() != ESP_OK);
@@ -190,6 +294,7 @@ int main(void)
     assert(!management_active() && !s_updating && aborts == 1 && switches == 0);
     reset(); transfer(); command(RR_END); assert(transact() == ESP_OK);
     clock_us += 30000001; management_tick(); assert(restarts == 1);
+    settings_tests();
     puts("Management fault-injection checks passed (real protocol/state machine; simulated IDF storage/OTA).");
     return 0;
 }
