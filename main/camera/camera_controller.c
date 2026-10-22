@@ -58,6 +58,8 @@ static void set_recording_task(void *argument)
         s_last_command_result = dji_action2_set_recording(recording);
     } else if (state.protocol == CAMERA_PROTOCOL_DJI_RSDK) {
         s_last_command_result = dji_rs_sdk_set_recording(recording);
+        if (s_last_command_result == -2 || s_last_command_result == -3)
+            connect_logic_ble_disconnect();
     } else {
         s_last_command_result = -1;
     }
@@ -176,11 +178,10 @@ static void start_reconnect(void)
     }
 }
 
-static void pair_camera_task(void *argument)
+static void pair_camera(bool use_saved)
 {
     if (!take_command()) {
         s_pair_queued = false;
-        vTaskDelete(NULL);
         return;
     }
     s_pair_queued = false;
@@ -197,21 +198,20 @@ static void pair_camera_task(void *argument)
     dji_rs_sdk_reset();
     dji_action2_reset();
     s_phase = CAMERA_PHASE_SCANNING;
-    bool remembered = argument != NULL && s_selected == CAMERA_PROTOCOL_DJI_RSDK && s_rs_saved;
+    bool remembered = use_saved && s_selected == CAMERA_PROTOCOL_DJI_RSDK && s_rs_saved;
     if (remembered) ble_set_reconnect_target(s_rs_profile, s_rs_profile[6]);
     if (connect_logic_ble_connect(remembered) != 0) {
         s_phase = s_ble_profile.connection_status.is_connected
             ? CAMERA_PHASE_GATT_MISMATCH
             : CAMERA_PHASE_SCAN_FAILED;
         release_command();
-        vTaskDelete(NULL);
         return;
     }
 
     if (s_selected == CAMERA_PROTOCOL_DJI_RSDK) {
         s_pairing_code = (uint16_t)(esp_random() % 10000);
         s_phase = CAMERA_PHASE_VERIFYING;
-        dji_rs_sdk_connect_result_t result = dji_rs_sdk_connect(s_pairing_code);
+        dji_rs_sdk_connect_result_t result = dji_rs_sdk_connect(s_pairing_code, remembered);
         s_protocol = CAMERA_PROTOCOL_DJI_RSDK;
         s_phase = result == DJI_RSDK_CONNECT_READY ? CAMERA_PHASE_READY : CAMERA_PHASE_PAIR_REJECTED;
         if (result == DJI_RSDK_CONNECT_READY) {
@@ -232,8 +232,8 @@ static void pair_camera_task(void *argument)
                 else { memcpy(s_rs_profile, profile, sizeof(profile)); s_rs_saved = true; }
             }
         }
+        if (result != DJI_RSDK_CONNECT_READY) connect_logic_ble_disconnect();
         release_command();
-        vTaskDelete(NULL);
         return;
     }
 
@@ -244,6 +244,11 @@ static void pair_camera_task(void *argument)
         s_phase = CAMERA_PHASE_PAIR_REJECTED;
     }
     release_command();
+}
+
+static void pair_camera_task(void *argument)
+{
+    pair_camera(argument != NULL);
     vTaskDelete(NULL);
 }
 
@@ -260,7 +265,18 @@ static void auto_connect_task(void *argument)
         vTaskDelete(NULL);
         return;
     }
-    pair_camera_task(s_rs_saved ? (void *)1 : NULL);
+    pair_camera(s_rs_saved);
+    /* The BLE callback only invalidates the link. Restore the full R SDK session
+     * here, including approval, version query and status subscription. */
+    while (s_selected == CAMERA_PROTOCOL_DJI_RSDK) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (s_rs_saved && !s_command_busy && !s_pair_queued && !management_active() &&
+            s_phase != CAMERA_PHASE_PAIR_REJECTED &&
+            connect_logic_get_state() == BLE_INIT_COMPLETE) {
+            pair_camera(true);
+        }
+    }
+    vTaskDelete(NULL);
 }
 
 esp_err_t camera_controller_init(void)
@@ -315,25 +331,19 @@ void camera_controller_short_press(void)
         gopro_request_recording(!state.recording);
         return;
     }
-    if (!take_command()) {
-        return;
-    }
-
     dji_action2_state_t action2;
     dji_action2_get_state(&action2);
-    if (s_protocol == CAMERA_PROTOCOL_DJI_ACTION2) {
-        if (action2.stage == DJI_ACTION2_READY) {
-            dji_action2_toggle_recording();
-        } else if (action2.stage == DJI_ACTION2_SESSION_SETUP ||
-                   action2.stage == DJI_ACTION2_REJECTED) {
+    if (s_protocol == CAMERA_PROTOCOL_DJI_ACTION2 &&
+        (action2.stage == DJI_ACTION2_SESSION_SETUP || action2.stage == DJI_ACTION2_REJECTED)) {
+        if (take_command()) {
             dji_action2_trigger_pairing();
+            release_command();
         }
-        release_command();
         return;
     }
-
-    s_last_command_result = dji_rs_sdk_toggle_recording();
-    release_command();
+    camera_controller_state_t state;
+    camera_controller_get_state(&state);
+    camera_controller_request_recording(!state.recording);
 }
 
 esp_err_t camera_controller_request_pairing(void)
@@ -414,8 +424,8 @@ void camera_controller_get_state(camera_controller_state_t *state)
     connect_state_t link = connect_logic_get_state();
     if (s_protocol == CAMERA_PROTOCOL_DJI_RSDK) {
         state->recording = state->snapshot.recording;
-        state->recording_valid = state->snapshot.valid && link == PROTOCOL_CONNECTED;
-        state->battery_valid = state->recording_valid && state->snapshot.battery <= 100;
+        state->recording_valid = state->snapshot.recording_valid && link == PROTOCOL_CONNECTED;
+        state->battery_valid = state->snapshot.valid && state->snapshot.battery <= 100;
         if (link != PROTOCOL_CONNECTED && state->phase == CAMERA_PHASE_READY) {
             state->phase = CAMERA_PHASE_WAITING_STATUS;
         }

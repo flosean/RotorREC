@@ -4,7 +4,7 @@ The GoPro adapter uses the official Open GoPro BLE interface. It implements scan
 
 ## Protocol scope
 
-The camera must provide Open GoPro API 2.x, the FEA6 control/query service, GP-0090 management service and the documented one-byte TLV status queries. Consult the [official supported-camera list](https://gopro.github.io/OpenGoPro/) for model and minimum firmware requirements. This does not imply every listed camera has passed RotorREC testing. Legacy undocumented GoPro control and Wi-Fi/HTTP control are outside this implementation.
+The camera must provide Open GoPro API 2.0, the FEA6 control/query service, GP-0090 management service and the documented one-byte TLV status queries. Consult the [official supported-camera list](https://gopro.github.io/OpenGoPro/) for model and minimum firmware requirements. This does not imply every listed camera has passed RotorREC testing. Legacy undocumented GoPro control and Wi-Fi/HTTP control are outside this implementation.
 
 All supported adapters are now included in each board image. Action 2 remains the default; select `gopro` using the [passthrough manager](passthrough.md). The ESP restarts and initializes only the selected BLE adapter. No GoPro-specific build or menuconfig choice is needed.
 
@@ -26,6 +26,7 @@ A saved GoPro reconnects automatically after link loss or module restart. Reconn
 
 - Query status 10 (encoding), 8 (busy), 82 (ready), 70 (battery percentage) and 96 (preset group). Encoding is never inferred from a successful shutter acknowledgement.
 - Poll normally about once per second, and send keepalive setting 0x5B with value 0x42 about every three seconds. The camera stays awake while the session is maintained.
+- Third-party client identification may omit its reply, matching the official SDK. Only a completed GATT write with no response is tolerated; malformed/partial responses, explicit errors and disconnects still fail setup. API-version, pairing completion and shutter responses remain mandatory.
 - A start/stop request is sent once. The adapter waits for the command response and subsequent matching camera status; a missing reply or state confirmation causes reconnection, with no automatic shutter resend.
 - A malformed/incomplete status reply cannot partially overwrite state. Data older than five seconds is invalid; disconnection immediately invalidates it when the worker processes the event.
 - The adapter uses bounded packet assembly and checks continuation order. Bond keys are stored by Bluedroid; the target address is stored in the `gopro` NVS namespace.

@@ -29,6 +29,7 @@ typedef enum {
 
 typedef struct {
     bool valid;
+    bool recording_valid; /* Fresh, recognized video mode and recording state. */
     bool record_time_valid;
     bool remain_time_valid;
     bool remain_capacity_valid;

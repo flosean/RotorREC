@@ -1,8 +1,20 @@
 # RotorREC verification status
 
-Updated: 2026-10-02. Firmware version: 1.2.0-dev (unreleased; new hardware acceptance pending).
+Updated: 2026-10-22. Firmware version: 1.2.0-dev (unreleased; new hardware acceptance pending).
 
 **The project owner confirms that Betaflight UART communication and OSD functionality have been tested on real hardware, used successfully, and work correctly.** This replaces the earlier pending-hardware status for UART and OSD. The confirmation did not include a specific FC firmware/board combination or a detailed cycle-count and fault-injection record.
+
+## 2026-10-22 protocol integration verification
+
+The earlier Action 2 hardware results below remain valid historical evidence, reaffirmed by the project owner. This change preserves its known command payloads and status fields; the new receiver and controller behavior have not been flashed or hardware-regressed.
+
+- DJI host tests pass against the actual R SDK adapter: remembered/first pairing mode, failed version reply, normal/photo/unknown/pre-record state gating, actual-state confirmation after ACK, no confirmation, missing/error ACK, disconnect, stale data and tick wrap.
+- Actual DJI connection logic passes mocked transport tests for ACK plus approval, approval without ACK (one consumption), rejection, short approval, offline disconnect and a nonblocking disconnect callback.
+- Extracted Action 2 DUML passes an independent captured query-byte comparison, every split boundary, concatenated frames, damaged CRC/noise resynchronization, maximum frame length and overflow rejection.
+- GoPro protocol/API-version/status/advertisement/Betaflight tests pass. Optional identification-timeout handling and the full application reconnect worker are code/build checked, not simulated end-to-end; BLE compatibility still requires hardware.
+- Betaflight passes 11,956 checks; management fault injection and 15 Python manager tests pass.
+- ESP-IDF v5.5.5 final builds pass: C3 application 903,312 bytes; C6 application 1,290,240 bytes. No hardware was flashed and no new update ZIP was generated; older local ZIPs do not contain these changes.
+- Nano source/command research is complete for this iteration, but no Nano runtime adapter is enabled. Neither the official support table nor the release notes checked provide current public confirmation of Nano R SDK support. Source dates, community alternatives and uncertainty are recorded in [protocol research](camera-protocol-research.md).
 
 ## 1.2 development software verification
 

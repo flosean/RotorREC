@@ -23,6 +23,7 @@ static portMUX_TYPE s_snapshot_mux = portMUX_INITIALIZER_UNLOCKED;
 static camera_snapshot_t s_snapshot;
 static TickType_t s_snapshot_tick;
 static TickType_t s_parameters_tick;
+static uint32_t s_status_generation;
 
 static const char *resolution_name(uint8_t resolution)
 {
@@ -77,8 +78,8 @@ static void camera_status_callback(void *data)
         portENTER_CRITICAL(&s_snapshot_mux);
         s_snapshot.valid = true;
         s_snapshot_tick = xTaskGetTickCount();
-        s_snapshot.recording = status->camera_status == CAMERA_STATUS_PHOTO_OR_RECORDING ||
-                               status->camera_status == CAMERA_STATUS_PRE_RECORDING;
+        ++s_status_generation;
+        s_snapshot.recording = status->camera_status == CAMERA_STATUS_PHOTO_OR_RECORDING;
         s_snapshot.battery = status->camera_bat_percentage;
         s_snapshot.record_time = status->record_time;
         s_snapshot.remain_time = status->remain_time;
@@ -89,6 +90,12 @@ static void camera_status_callback(void *data)
                      status->camera_mode == CAMERA_MODE_TIMELAPSE ||
                      status->camera_mode == CAMERA_MODE_HYPERLAPSE ||
                      status->camera_mode == CAMERA_MODE_SUPERNIGHT;
+        /* PRE_RECORDING is a buffer, not confirmation that a file is recording.
+         * Photo, playback, streaming and unknown states cannot authorize shutter. */
+        s_snapshot.recording_valid = video &&
+            (status->camera_status == CAMERA_STATUS_SCREEN_OFF ||
+             status->camera_status == CAMERA_STATUS_LIVE_STREAMING ||
+             status->camera_status == CAMERA_STATUS_PHOTO_OR_RECORDING);
         s_snapshot.record_time_valid = video;
         s_snapshot.remain_time_valid = video && status->remain_time != UINT32_MAX;
         s_snapshot.remain_capacity_valid = status->remain_capacity != UINT32_MAX;
@@ -139,7 +146,7 @@ void dji_rs_sdk_reset(void)
     portEXIT_CRITICAL(&s_snapshot_mux);
 }
 
-dji_rs_sdk_connect_result_t dji_rs_sdk_connect(uint16_t pairing_code)
+dji_rs_sdk_connect_result_t dji_rs_sdk_connect(uint16_t pairing_code, bool remembered)
 {
     uint8_t bluetooth_mac[6];
     int8_t controller_mac[6];
@@ -147,12 +154,14 @@ dji_rs_sdk_connect_result_t dji_rs_sdk_connect(uint16_t pairing_code)
     ESP_ERROR_CHECK(esp_read_mac(bluetooth_mac, ESP_MAC_BT));
     memcpy(controller_mac, bluetooth_mac, sizeof(controller_mac));
     if (connect_logic_protocol_connect(0x12345678, sizeof(controller_mac), controller_mac,
-                                       0, 1, pairing_code, 0) != 0) {
+                                       0, remembered ? 0 : 1, pairing_code, 0) != 0) {
         return DJI_RSDK_CONNECT_FAILED;
     }
 
     version_query_response_frame_t *version = command_logic_get_version();
+    bool version_ok = version != NULL && version->ack_result == 0;
     free(version);
+    if (!version_ok) return DJI_RSDK_CONNECT_FAILED;
     if (subscript_camera_status(PUSH_MODE_PERIODIC_WITH_STATE_CHANGE, PUSH_FREQ_2HZ) != 0) {
         return DJI_RSDK_CONNECT_SUBSCRIBE_FAILED;
     }
@@ -161,26 +170,48 @@ dji_rs_sdk_connect_result_t dji_rs_sdk_connect(uint16_t pairing_code)
 
 int dji_rs_sdk_toggle_recording(void)
 {
-    return dji_rs_sdk_set_recording(!is_camera_recording());
+    camera_snapshot_t snapshot;
+    dji_rs_sdk_get_snapshot(&snapshot);
+    return dji_rs_sdk_set_recording(!snapshot.recording);
 }
 
 int dji_rs_sdk_set_recording(bool recording)
 {
     camera_snapshot_t snapshot;
     dji_rs_sdk_get_snapshot(&snapshot);
-    if (connect_logic_get_state() != PROTOCOL_CONNECTED || !camera_status_initialized || !snapshot.valid) {
+    if (!snapshot.recording_valid) {
         return -1;
     }
     if (snapshot.recording == recording) return 0;
+    portENTER_CRITICAL(&s_snapshot_mux);
+    s_snapshot.recording_valid = false;
+    portEXIT_CRITICAL(&s_snapshot_mux);
     record_control_response_frame_t *response = recording
         ? command_logic_start_record()
         : command_logic_stop_record();
     int result = response == NULL ? -2 : response->ret_code;
     free(response);
     portENTER_CRITICAL(&s_snapshot_mux);
-    s_snapshot.valid = false; // Wait for a new camera report after the command/timeout.
+    uint32_t generation = s_status_generation;
+    s_snapshot.recording_valid = false;
     portEXIT_CRITICAL(&s_snapshot_mux);
-    return result;
+    if (result != 0) return result;
+    /* Keep the controller command pending through actual-state confirmation.
+     * Do not resend a shutter whose outcome is unknown. */
+    TickType_t started = xTaskGetTickCount();
+    while ((TickType_t)(xTaskGetTickCount() - started) < pdMS_TO_TICKS(5000)) {
+        if (connect_logic_get_state() != PROTOCOL_CONNECTED) break;
+        vTaskDelay(pdMS_TO_TICKS(50));
+        dji_rs_sdk_get_snapshot(&snapshot);
+        portENTER_CRITICAL(&s_snapshot_mux);
+        bool updated = s_status_generation != generation;
+        portEXIT_CRITICAL(&s_snapshot_mux);
+        if (updated && snapshot.recording_valid && snapshot.recording == recording) return 0;
+    }
+    portENTER_CRITICAL(&s_snapshot_mux);
+    s_snapshot.recording_valid = false;
+    portEXIT_CRITICAL(&s_snapshot_mux);
+    return -3;
 }
 
 void dji_rs_sdk_get_snapshot(camera_snapshot_t *snapshot)
@@ -197,6 +228,7 @@ void dji_rs_sdk_get_snapshot(camera_snapshot_t *snapshot)
     portEXIT_CRITICAL(&s_snapshot_mux);
     if (connect_logic_get_state() != PROTOCOL_CONNECTED) snapshot->valid = false;
     if (!snapshot->valid) {
+        snapshot->recording_valid = false;
         snapshot->record_time_valid = snapshot->remain_time_valid = false;
         snapshot->remain_capacity_valid = snapshot->parameters_valid = false;
     }

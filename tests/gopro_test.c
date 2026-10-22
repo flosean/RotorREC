@@ -6,6 +6,14 @@
 
 static void packet_tests(void)
 {
+    uint8_t version[] = {0x51, 0, 1, 2, 1, 0};
+    assert(gopro_api_version_supported(version, sizeof(version)));
+    for (size_t i = 0; i < sizeof(version); ++i)
+        assert(!gopro_api_version_supported(version, i));
+    version[5] = 1;
+    assert(!gopro_api_version_supported(version, sizeof(version)));
+    version[5] = 0; version[1] = 1;
+    assert(!gopro_api_version_supported(version, sizeof(version)));
     gopro_rx_t rx = {0};
     const uint8_t ack[] = {2, 1, 0};
     assert(gopro_rx_feed(&rx, ack, sizeof(ack)) == 1);

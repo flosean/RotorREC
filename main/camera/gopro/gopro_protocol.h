@@ -7,6 +7,22 @@
 /* Official EnumPresetGroup, not the similarly named icon IDs (0/1/2). */
 #define GOPRO_PRESET_GROUP_VIDEO 1000U
 
+/* Open GoPro BLE IDs; lengths on the wire do not include the packet header. */
+enum {
+    GOPRO_CMD_SHUTTER = 0x01,
+    GOPRO_CMD_HARDWARE_INFO = 0x3c,
+    GOPRO_CMD_IDENTIFY = 0x50,
+    GOPRO_CMD_API_VERSION = 0x51,
+    GOPRO_QUERY_STATUS = 0x13,
+    GOPRO_SETTING_KEEPALIVE = 0x5b,
+    GOPRO_STATUS_BUSY = 8,
+    GOPRO_STATUS_ENCODING = 10,
+    GOPRO_STATUS_BATTERY = 70,
+    GOPRO_STATUS_READY = 82,
+    GOPRO_STATUS_PRESET_GROUP = 96,
+};
+bool gopro_api_version_supported(const uint8_t *data, size_t length);
+
 /* Open GoPro BLE packetization. Each response characteristic needs its own RX. */
 typedef struct {
     uint8_t data[512];

@@ -11,4 +11,10 @@ try {
     $rrCompile = 'call "{0}" >nul && cl /nologo /std:c11 /utf-8 /W4 /WX /D_CRT_SECURE_NO_WARNINGS /I"{1}/main" /I"{1}/main/camera" /I"{1}/tests" /I"{1}/components/dji_camera_sdk/protocol" /I"{1}/components/dji_camera_sdk/logic" "{1}/tests/dji_rs_sdk_test.c" /Fe:dji_rs_sdk_test.exe && dji_rs_sdk_test.exe' -f $rrVars, $rrRoot
     & cmd.exe /d /s /c $rrCompile
     if ($LASTEXITCODE -ne 0) { throw 'DJI callback tests failed.' }
+    $rrCompile = 'call "{0}" >nul && cl /nologo /std:c11 /utf-8 /W4 /WX /I"{1}/main" "{1}/tests/dji_duml_test.c" "{1}/main/camera/dji/dji_duml.c" /Fe:dji_duml_test.exe && dji_duml_test.exe' -f $rrVars, $rrRoot
+    & cmd.exe /d /s /c $rrCompile
+    if ($LASTEXITCODE -ne 0) { throw 'DJI DUML tests failed.' }
+    $rrCompile = 'call "{0}" >nul && cl /nologo /std:c11 /utf-8 /W4 /WX /I"{1}/tests" /I"{1}/components/dji_camera_sdk/protocol" /I"{1}/components/dji_camera_sdk/logic" "{1}/tests/dji_connect_test.c" /Fe:dji_connect_test.exe && dji_connect_test.exe' -f $rrVars, $rrRoot
+    & cmd.exe /d /s /c $rrCompile
+    if ($LASTEXITCODE -ne 0) { throw 'DJI handshake tests failed.' }
 } finally { Pop-Location }

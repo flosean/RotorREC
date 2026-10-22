@@ -2,6 +2,14 @@
 
 #include <string.h>
 
+bool gopro_api_version_supported(const uint8_t *data, size_t length)
+{
+    /* 0x51 response: result, major-length/value, minor-length/value.
+     * Match the official SDK's supported API 2.0, not arbitrary future 2.x. */
+    return data && length == 6 && data[0] == GOPRO_CMD_API_VERSION && data[1] == 0 &&
+        data[2] == 1 && data[3] == 2 && data[4] == 1 && data[5] == 0;
+}
+
 int gopro_rx_feed(gopro_rx_t *rx, const uint8_t *packet, size_t length)
 {
     if (!packet || !length) goto invalid;
@@ -41,7 +49,7 @@ invalid:
 
 bool gopro_parse_status(const uint8_t *data, size_t length, gopro_status_t *status)
 {
-    if (!data || !status || length < 2 || data[0] != 0x13 || data[1] != 0) return false;
+    if (!data || !status || length < 2 || data[0] != GOPRO_QUERY_STATUS || data[1] != 0) return false;
     gopro_status_t result = {0};
     unsigned found = 0;
     for (size_t i = 2; i < length;) {
@@ -51,17 +59,17 @@ bool gopro_parse_status(const uint8_t *data, size_t length, gopro_status_t *stat
         if (!size || size > length - i) return false;
         unsigned bit = 0;
         switch (id) {
-        case 8: case 10: case 82:
+        case GOPRO_STATUS_BUSY: case GOPRO_STATUS_ENCODING: case GOPRO_STATUS_READY:
             if (size != 1 || data[i] > 1) return false;
-            if (id == 8) { result.busy = data[i]; bit = 1; }
-            if (id == 10) { result.encoding = data[i]; bit = 2; }
-            if (id == 82) { result.ready = data[i]; bit = 4; }
+            if (id == GOPRO_STATUS_BUSY) { result.busy = data[i]; bit = 1; }
+            if (id == GOPRO_STATUS_ENCODING) { result.encoding = data[i]; bit = 2; }
+            if (id == GOPRO_STATUS_READY) { result.ready = data[i]; bit = 4; }
             break;
-        case 70:
+        case GOPRO_STATUS_BATTERY:
             if (size != 1 || data[i] > 100) return false;
             result.battery = data[i]; bit = 8;
             break;
-        case 96:
+        case GOPRO_STATUS_PRESET_GROUP:
             if (size != 4) return false;
             result.preset_group = ((uint32_t)data[i] << 24) | ((uint32_t)data[i+1] << 16) |
                 ((uint32_t)data[i+2] << 8) | data[i+3];

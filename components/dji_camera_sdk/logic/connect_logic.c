@@ -18,6 +18,9 @@
  */
 
 #include <string.h>
+#ifdef RR_CONNECT_HOST_TEST
+#include "dji_connect_test_platform.h"
+#else
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -29,6 +32,7 @@
 #include "command_logic.h"
 #include "status_logic.h"
 #include "dji_protocol_data_structures.h"
+#endif
 
 #define TAG "LOGIC_CONNECT"
 
@@ -52,57 +56,11 @@ connect_state_t connect_logic_get_state(void) {
  * Perform operations according to current connection state and reset connection state to BLE initialization complete (BLE_INIT_COMPLETE).
  * Handle the current state and reset it to BLE_INIT_COMPLETE
  */
-void receive_camera_disconnect_handler() {
-    switch (connect_state) {
-        case BLE_SEARCHING:
-            break;
-        case BLE_INIT_COMPLETE:
-            ESP_LOGI(TAG, "Already in DISCONNECTED state.");
-            break;
-        case BLE_DISCONNECTING: {
-            ESP_LOGI(TAG, "Normal disconnection process.");
-            // Normal disconnection also needs to reset state
-            // Reset state after an intentional disconnect as well
-            connect_state = BLE_INIT_COMPLETE;
-            camera_status_initialized = false;
-            ESP_LOGI(TAG, "Current state: DISCONNECTED.");
-            break;
-        }
-        case BLE_CONNECTED:
-        case PROTOCOL_CONNECTED:
-        default: {
-            ESP_LOGW(TAG, "Unexpected disconnection from state: %d, attempting reconnection...", connect_state);
-            
-            // Try to reconnect once
-            // Attempt reconnection once
-            bool reconnected = false;
-            ESP_LOGI(TAG, "Reconnection attempt...");
-            if (connect_logic_ble_connect(true) == ESP_OK) {
-                // Wait for reconnection result
-                // Wait for the reconnection result
-                for (int j = 0; j < 300; j++) { // Wait for 30 seconds
-                                                // Wait for 30 seconds
-                    if (s_ble_profile.connection_status.is_connected) {
-                        ESP_LOGI(TAG, "Reconnection successful");
-                        reconnected = true;
-                        return;  // Return immediately if reconnection succeeds
-                    }
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                }
-            }
-
-            if (!reconnected) {
-                ESP_LOGE(TAG, "Reconnection failed after 1 attempts");
-                // Reconnection failed, execute disconnection logic
-                // Run disconnection handling if reconnection fails
-                connect_state = BLE_INIT_COMPLETE;
-                camera_status_initialized = false;
-                ble_disconnect();
-                ESP_LOGI(TAG, "Current state: DISCONNECTED.");
-            }
-            break;
-        }
-    }
+void receive_camera_disconnect_handler(void) {
+    /* Never wait for scan/GATT events inside the Bluetooth callback. The
+     * application reconnect worker must restore the protocol, not just BLE. */
+    connect_state = BLE_INIT_COMPLETE;
+    camera_status_initialized = false;
 }
 
 /**
@@ -249,6 +207,10 @@ int connect_logic_ble_connect(bool is_reconnecting) {
  *             Return 0 on success, or -1 on failure
  */
 int connect_logic_ble_disconnect(void) {
+    if (!s_ble_profile.connection_status.is_connected) {
+        receive_camera_disconnect_handler();
+        return 0;
+    }
     connect_state_t old_state = connect_state;
     connect_state = BLE_DISCONNECTING;
     
@@ -305,6 +267,8 @@ int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, con
                                    uint32_t fw_version, uint8_t verify_mode, uint16_t verify_data,
                                    uint8_t camera_reserved) {
     ESP_LOGI(TAG, "%s: Starting protocol connection", __FUNCTION__);
+    if (mac_addr == NULL || mac_addr_len > sizeof(((connection_request_command_frame *)0)->mac_addr) ||
+        connect_state != BLE_CONNECTED) return -1;
     uint16_t seq = generate_seq();
 
     // Construct connection request command frame
@@ -324,59 +288,25 @@ int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, con
     ESP_LOGI(TAG, "Sending connection request to camera...");
     CommandResult result = send_command(0x00, 0x19, CMD_WAIT_RESULT, &connection_request, seq, 1000);
 
-    /**** Connection issue: camera may return either response frame or command frame ****/
-    /****************** The camera may return either an acknowledgement frame or a command frame*/
-
-    if (result.structure == NULL) {
-        // If a command frame is sent, execute this block of code
-        // Handle a command frame here
-
-        // Directly call data_wait_for_result_by_cmd(0x00, 0x19, 30000, &received_seq, &parse_result, &parse_result_length);
-        // Call data_wait_for_result_by_cmd(0x00, 0x19, 30000, &received_seq, &parse_result, &parse_result_length)
-        
-        // If != OK, it means no message was received, timeout occurred
-        // A result other than OK means no message arrived before timeout
-        
-        // Otherwise, GOTO wait_for_camera_command label
-        // Otherwise, jump to wait_for_camera_command
-        void *parse_result = NULL;
-        size_t parse_result_length = 0;
-        uint16_t received_seq = 0;
-        esp_err_t ret = data_wait_for_result_by_cmd(0x00, 0x19, 1000, &received_seq, &parse_result, &parse_result_length);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Timeout or error waiting for camera connection command, GOTO Failed.");
+    /* ACK and the camera's approval command are separate messages. A camera
+     * can send approval before the ACK; consume that queued command only once. */
+    if (result.structure != NULL) {
+        bool accepted = result.length >= sizeof(connection_request_response_frame) &&
+            ((connection_request_response_frame *)result.structure)->ret_code == 0;
+        free(result.structure);
+        if (!accepted) {
             connect_logic_ble_disconnect();
             return -1;
-        } else {
-            // If data is received, skip parsing camera response and directly enter STEP3
-            // If data arrives, skip response parsing and proceed to STEP3
-            goto wait_for_camera_command;
         }
     }
-
-    // STEP2: Parse the response returned from camera
-    // Parse the camera response
-    connection_request_response_frame *response = (connection_request_response_frame *)result.structure;
-    if (response->ret_code != 0) {
-        ESP_LOGE(TAG, "Connection handshake failed: unexpected response from camera, ret_code: %d", response->ret_code);
-        free(response);
-        connect_logic_ble_disconnect();
-        return -1;
-    }
-
-    ESP_LOGI(TAG, "Handshake successful, waiting for the camera to actively send the connection command frame...");
-    free(response);
-
-    // STEP3: Wait for camera to send connection request
-    // Wait for an unsolicited camera connection request
-wait_for_camera_command:
     void *parse_result = NULL;
     size_t parse_result_length = 0;
     uint16_t received_seq = 0;
-    esp_err_t ret = data_wait_for_result_by_cmd(0x00, 0x19, 30000, &received_seq, &parse_result, &parse_result_length);
-
-    if (ret != ESP_OK || parse_result == NULL) {
-        ESP_LOGE(TAG, "Timeout or error waiting for camera connection command");
+    esp_err_t ret = data_wait_for_result_by_cmd(0x00, 0x19, 30000,
+        &received_seq, &parse_result, &parse_result_length);
+    if (ret != ESP_OK || parse_result == NULL ||
+        parse_result_length < sizeof(connection_request_command_frame)) {
+        free(parse_result);
         connect_logic_ble_disconnect();
         return -1;
     }

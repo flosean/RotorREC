@@ -197,34 +197,36 @@ static bool wait_event(event_kind_t kind, uint16_t handle, uint32_t timeout, eve
 
 /* No shutter retries: a missing response has an unknown outcome. Reconnect
  * before another command so a late reply cannot acknowledge the next request. */
-static bool exchange(unsigned channel, const uint8_t *packet, size_t length,
+typedef enum { EXCHANGE_FAILED, EXCHANGE_REPLIED, EXCHANGE_NO_REPLY } exchange_result_t;
+static exchange_result_t exchange(unsigned channel, const uint8_t *packet, size_t length,
                      uint8_t response_id, uint32_t timeout)
 {
     memset(&s_rx[channel], 0, sizeof(s_rx[channel]));
     if (!s_connected || esp_ble_gattc_write_char(s_interface, s_conn, s_write[channel],
             length, (uint8_t *)packet, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE) != ESP_OK)
-        return false;
+        return EXCHANGE_FAILED;
     bool written = false, replied = false;
     event_t event;
     TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout);
     while (next_event(&event, deadline)) {
         if (event.kind == EV_WRITE && event.handle == s_write[channel] && event.conn == s_conn) {
-            if (event.status != ESP_GATT_OK) return false;
+            if (event.status != ESP_GATT_OK) return EXCHANGE_FAILED;
             written = true;
-        } else if (event.kind == EV_NOTIFY && event.handle == s_notify[channel] && event.conn == s_conn) {
+        } else if (!replied && event.kind == EV_NOTIFY && event.handle == s_notify[channel] && event.conn == s_conn) {
             int result = gopro_rx_feed(&s_rx[channel], event.data, event.length);
-            if (result < 0) return false;
+            if (result < 0) return EXCHANGE_FAILED;
             if (result == 1 && s_rx[channel].used >= 2 && s_rx[channel].data[0] == response_id)
                 replied = true;
         }
-        if (written && replied) return true;
+        if (written && replied) return EXCHANGE_REPLIED;
     }
-    return false;
+    return written && !replied && s_rx[channel].used == 0 && s_connected && !atomic_load(&s_overflow)
+        ? EXCHANGE_NO_REPLY : EXCHANGE_FAILED;
 }
 
 static bool command(unsigned channel, const uint8_t *packet, size_t length)
 {
-    return exchange(channel, packet, length, packet[1], 3000) && s_rx[channel].data[1] == 0;
+    return exchange(channel, packet, length, packet[1], 3000) == EXCHANGE_REPLIED && s_rx[channel].data[1] == 0;
 }
 
 static void load_profile(void)
@@ -356,36 +358,42 @@ static bool connect_camera(void)
 static bool setup_camera(void)
 {
     phase(CAMERA_PHASE_WAITING_STATUS);
-    const uint8_t hardware[] = {1, 0x3c};
+    const uint8_t hardware[] = {1, GOPRO_CMD_HARDWARE_INFO};
     bool ready = false;
     for (unsigned attempt = 0; attempt < 10 && s_connected; ++attempt) {
-        if (!exchange(0, hardware, sizeof(hardware), 0x3c, 3000)) return false;
+        if (exchange(0, hardware, sizeof(hardware), GOPRO_CMD_HARDWARE_INFO, 3000) != EXCHANGE_REPLIED) return false;
         if (s_rx[0].data[1] == 0) { ready = true; break; }
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     if (!ready) return false;
     /* Open GoPro API version, then third-party client identification. */
-    const uint8_t version[] = {1, 0x51};
-    const uint8_t identify[] = {1, 0x50};
-    if (!command(0, version, sizeof(version)) || s_rx[0].used != 6 ||
-        s_rx[0].data[2] != 1 || s_rx[0].data[3] != 2 || s_rx[0].data[4] != 1) {
-        ESP_LOGW(TAG, "Camera did not confirm Open GoPro API 2.x");
+    const uint8_t version[] = {1, GOPRO_CMD_API_VERSION};
+    const uint8_t identify[] = {1, GOPRO_CMD_IDENTIFY};
+    if (!command(0, version, sizeof(version)) ||
+        !gopro_api_version_supported(s_rx[0].data, s_rx[0].used)) {
+        ESP_LOGW(TAG, "Camera did not confirm Open GoPro API 2.0");
         return false;
     }
-    if (!command(0, identify, sizeof(identify))) return false;
+    exchange_result_t identified = exchange(0, identify, sizeof(identify), GOPRO_CMD_IDENTIFY, 3000);
+    /* Official SDK tolerates cameras that never answer client identification.
+     * Only a completed GATT write with no reply qualifies; errors still fail. */
+    if (identified == EXCHANGE_FAILED ||
+        (identified == EXCHANGE_REPLIED && s_rx[0].data[1] != 0)) return false;
+    if (identified == EXCHANGE_NO_REPLY) ESP_LOGI(TAG, "Client identification reply absent; continuing as official SDK does");
     /* RequestPairingFinish: result=SUCCESS(0), phoneName="RotorREC". */
     const uint8_t pairing[] = {14, 0x03, 0x01, 0x08, 0x00, 0x12, 8,
                               'R','o','t','o','r','R','E','C'};
-    if (!exchange(3, pairing, sizeof(pairing), 0x03, 3000) || s_rx[3].used != 4 ||
+    if (exchange(3, pairing, sizeof(pairing), 0x03, 3000) != EXCHANGE_REPLIED || s_rx[3].used != 4 ||
         memcmp(s_rx[3].data, (uint8_t[]){0x03, 0x81, 0x08, 0x01}, 4) != 0) return false;
     return true;
 }
 
 static bool poll_status(void)
 {
-    const uint8_t query[] = {6, 0x13, 8, 10, 70, 82, 96};
+    const uint8_t query[] = {6, GOPRO_QUERY_STATUS, GOPRO_STATUS_BUSY, GOPRO_STATUS_ENCODING,
+        GOPRO_STATUS_BATTERY, GOPRO_STATUS_READY, GOPRO_STATUS_PRESET_GROUP};
     gopro_status_t status;
-    if (!exchange(2, query, sizeof(query), 0x13, 3000) ||
+    if (exchange(2, query, sizeof(query), GOPRO_QUERY_STATUS, 3000) != EXCHANGE_REPLIED ||
         !gopro_parse_status(s_rx[2].data, s_rx[2].used, &status)) return false;
     portENTER_CRITICAL(&s_mux);
     s_status_tick = xTaskGetTickCount();
@@ -456,11 +464,11 @@ static void worker(void *argument)
                     } else if (target == state.recording) {
                         finish_command(0);
                     } else {
-                        uint8_t shutter[] = {3, 1, 1, target ? 1 : 0};
+                        uint8_t shutter[] = {3, GOPRO_CMD_SHUTTER, 1, target ? 1 : 0};
                         portENTER_CRITICAL(&s_mux);
                         s_state.recording_valid = false;
                         portEXIT_CRITICAL(&s_mux);
-                        bool received = exchange(0, shutter, sizeof(shutter), 1, 3000);
+                        bool received = exchange(0, shutter, sizeof(shutter), GOPRO_CMD_SHUTTER, 3000) == EXCHANGE_REPLIED;
                         int result = received ? s_rx[0].data[1] : -3;
                         /* ACK never changes recording. Only a subsequent query can do so. */
                         if (!received || !poll_status()) {
@@ -478,7 +486,7 @@ static void worker(void *argument)
                                 break;
                             }
                             if ((int32_t)(deadline - xTaskGetTickCount()) <= 0) break;
-                            const uint8_t keepalive[] = {3, 0x5b, 1, 0x42};
+                            const uint8_t keepalive[] = {3, GOPRO_SETTING_KEEPALIVE, 1, 0x42};
                             if (!command(1, keepalive, sizeof(keepalive))) break;
                             last_keepalive = xTaskGetTickCount();
                             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -490,7 +498,7 @@ static void worker(void *argument)
                 }
                 if (atomic_load(&s_pair_requested)) break;
                 if (xTaskGetTickCount() - last_keepalive >= pdMS_TO_TICKS(2500)) {
-                    const uint8_t keepalive[] = {3, 0x5b, 1, 0x42};
+                    const uint8_t keepalive[] = {3, GOPRO_SETTING_KEEPALIVE, 1, 0x42};
                     if (!command(1, keepalive, sizeof(keepalive))) break;
                     last_keepalive = xTaskGetTickCount();
                 }

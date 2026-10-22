@@ -1,5 +1,6 @@
 # Documentation
 
+- [DJI / GoPro protocol research](camera-protocol-research.md): official commands, seven public implementation references, Action 2 baseline, Nano evidence and current integration changes (Traditional Chinese).
 - [Camera settings](camera-settings.md): 1.2 development settings, four-line OSD, low-battery warning, Link Pause and hardware acceptance (Traditional Chinese).
 - [CamLink feature evaluation](camlink-evaluation.md): historical official comparison and staged proposals; first-batch implementation is documented separately (Traditional Chinese).
 

@@ -11,7 +11,8 @@ app_main
   ui/dashboard -> camera_controller_state
   camera/camera_controller
     camera/dji/dji_rs_sdk -> DJI public R SDK component
-    camera/dji/dji_action2 -> legacy DUML, NVS, keepalive
+    camera/dji/dji_action2 -> model-specific payloads, NVS, keepalive
+      camera/dji/dji_duml -> bounded legacy framing/CRC and notification reassembly
     camera/gopro/gopro -> Open GoPro BLE, bonding, NVS, keepalive
     camera/gopro/gopro_protocol -> packet assembly and status parsing
   betaflight
@@ -50,7 +51,9 @@ app_main
 
 ### `main/camera/dji/dji_rs_sdk.*`
 
-- Wraps public R SDK pairing, status subscription, and recording control.
+- Wraps public R SDK pairing, status subscription, and recording control. Remembered connections use verify_mode=0; a recording ACK is followed by fresh actual-state confirmation.
+- Unknown/photo/pre-record/playback states block shutter requests. Snapshot freshness and recording validity are separate, so valid battery telemetry remains available.
+- BLE disconnect callbacks only invalidate the session. The controller worker reconnects saved targets and repeats protocol setup; failed approval/setup requires manual pairing. BOOT and USER share the asynchronous recording request.
 - Converts DJI enums and frames to the shared `camera_snapshot_t`.
 - Does not process Action 2 legacy frames.
 

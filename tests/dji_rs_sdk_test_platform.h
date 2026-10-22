@@ -22,6 +22,7 @@ typedef int portMUX_TYPE;
 #define ESP_ERROR_CHECK(result) assert((result) == 0)
 #define PROTOCOL_CONNECTED 1
 TickType_t xTaskGetTickCount(void);
+void vTaskDelay(TickType_t ticks);
 int esp_read_mac(uint8_t *mac, int kind);
 void data_init(void);
 void data_register_status_update_callback(void (*callback)(void *));

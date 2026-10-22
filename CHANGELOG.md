@@ -2,6 +2,11 @@
 
 ## 1.2.0-dev - Unreleased
 
+- Preserve the verified Action 2 payloads while extracting DUML framing and adding bounded split/concatenated notification handling with captured-byte regression checks.
+- Correct R SDK remembered pairing and approval handling, gate recording by video mode/status, wait for actual-state confirmation and restore full sessions outside BLE callbacks after link loss.
+- Align GoPro API 2.0 validation and optional client-identification timeout behavior with the official SDK; retain strict shutter acknowledgement/status confirmation.
+- Add dated official/community protocol research, including Nano source conflicts and the lack of confirmed public R SDK support. No Nano adapter is enabled by this change.
+
 - Add saved USER1-USER4 selection, two/four-line OSD, C3 LED brightness (1-100%) and optional low-battery warning with hysteresis. Defaults retain the existing two-line behavior.
 - Expose individually validated DJI R SDK recording duration, remaining video time, resolution/FPS and storage capacity. Photo/unknown modes, sentinel values and stale/disconnected data do not masquerade as valid video telemetry.
 - Add persistent Link Pause with pairing retained, BLE disabled at startup and owned OSD lines cleared. Resume through the manager or a 1.2-second BOOT hold; settings changes restart the ESP and obey camera/OTA busy gates.

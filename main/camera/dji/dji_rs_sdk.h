@@ -12,7 +12,7 @@ typedef enum {
 
 void dji_rs_sdk_init(void);
 void dji_rs_sdk_reset(void);
-dji_rs_sdk_connect_result_t dji_rs_sdk_connect(uint16_t pairing_code);
+dji_rs_sdk_connect_result_t dji_rs_sdk_connect(uint16_t pairing_code, bool remembered);
 int dji_rs_sdk_toggle_recording(void);
 int dji_rs_sdk_set_recording(bool recording);
 void dji_rs_sdk_get_snapshot(camera_snapshot_t *snapshot);

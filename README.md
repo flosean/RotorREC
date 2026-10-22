@@ -13,6 +13,7 @@ Current firmware version: **1.2.0-dev (new features pending hardware validation)
 - Persistent Link Pause retains pairing, disables BLE and clears the owned camera OSD lines. Resume from the manager or by holding BOOT for 1.2 seconds.
 - DJI Action 2 legacy BLE/DUML: pairing, saved camera profiles, automatic reconnection, recording control, actual recording state, and battery level.
 - DJI public R SDK: a separate protocol path for Action 4; connection, recording control, and recording settings were verified in an earlier hardware revision.
+- DJI R SDK reconnect restores the full session; recording requests require a recognized video state and camera confirmation after the ACK. Photo, pre-recording, playback and unknown states block shutter control.
 - GoPro official Open GoPro BLE: runtime-selectable pairing, saved target, reconnection, video start/stop, actual encoding status, battery, and keepalive. Hardware validation is pending; see [GoPro setup](docs/gopro.md).
 - Betaflight USER1-USER4 recording control. USER1 is the default; assign the AUX channel and switch range in Betaflight Modes.
 - OSD Custom Messages 1/2 for camera status/battery by default; optional 3/4 for recording settings/storage. Action 2 and GoPro extra fields remain unavailable.
@@ -29,9 +30,12 @@ Current firmware version: **1.2.0-dev (new features pending hardware validation)
 | ESP32-C6-LCD-1.47 | LCD verified previously; current-version hardware regression remains open |
 | Betaflight UART and OSD | Tested on real hardware and confirmed working by the project owner |
 | GoPro | Official Open GoPro BLE adapter implemented; hardware compatibility and functional validation pending |
+| DJI Osmo Nano | Public implementations researched; no Nano adapter enabled. Public DJI R SDK support is not confirmed; see the [protocol/source comparison](docs/camera-protocol-research.md) |
 | 1.2 settings, four-line OSD, warnings and Link Pause | Implemented; host tests and both board builds pass; current-version hardware acceptance remains pending |
 
 See [verification status](docs/verification-status.md) for evidence and remaining checks.
+
+The [2026-10-22 protocol research](docs/camera-protocol-research.md) compares official DJI/Open GoPro sources, CAMLINK and public ESP32/Swift implementations. The Action 2 command payloads and verified status fields are retained; its DUML receiver now handles split and concatenated frames. These changes require hardware regression separately from the earlier verified Action 2 baseline.
 
 ## Hardware and wiring
 

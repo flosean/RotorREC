@@ -8,7 +8,7 @@ set(app_sources "app_main.c"
 set(app_requires driver esp_timer esp_app_format)
 
 list(APPEND app_sources "camera/gopro/gopro.c" "camera/gopro/gopro_protocol.c"
-     "camera/dji/dji_action2.c" "camera/dji/dji_rs_sdk.c"
+     "camera/dji/dji_action2.c" "camera/dji/dji_duml.c" "camera/dji/dji_rs_sdk.c"
      "management/protocol.c" "management/settings.c" "management/management.c")
 list(APPEND app_requires bt nvs_flash dji_camera_sdk app_update mbedtls)
 
