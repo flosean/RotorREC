@@ -291,12 +291,12 @@ int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, con
     /* ACK and the camera's approval command are separate messages. A camera
      * can send approval before the ACK; consume that queued command only once. */
     if (result.structure != NULL) {
-        bool accepted = result.length >= sizeof(connection_request_response_frame) &&
-            ((connection_request_response_frame *)result.structure)->ret_code == 0;
+        bool complete = result.length >= sizeof(connection_request_response_frame);
+        bool accepted = complete && ((connection_request_response_frame *)result.structure)->ret_code == 0;
         free(result.structure);
         if (!accepted) {
             connect_logic_ble_disconnect();
-            return -1;
+            return complete ? CONNECT_PROTOCOL_REJECTED : -1;
         }
     }
     void *parse_result = NULL;
@@ -351,7 +351,7 @@ int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, con
         ESP_LOGW(TAG, "Camera rejected the connection, closing Bluetooth link...");
         free(parse_result);
         connect_logic_ble_disconnect();
-        return -1;
+        return CONNECT_PROTOCOL_REJECTED;
     }
 }
 

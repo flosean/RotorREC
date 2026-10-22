@@ -164,13 +164,17 @@ void dashboard_refresh(const camera_controller_state_t *state)
     else snprintf(elapsed, sizeof(elapsed), "--");
     if (state->snapshot.remain_time_valid) format_duration(state->snapshot.remain_time, remaining, sizeof(remaining));
     else snprintf(remaining, sizeof(remaining), "--");
-    if (state->snapshot.recording) {
+    if (state->command_pending || state->saving || !state->recording_valid) {
+        lv_label_set_text(s_record_label, state->command_pending ? "WAITING CAMERA..." :
+                          state->saving ? "CAMERA BUSY" : "STATUS UNKNOWN");
+    } else if (state->recording) {
         lv_label_set_text_fmt(s_record_label, "REC  %s", elapsed);
     } else {
         lv_label_set_text_fmt(s_record_label, "%s  STANDBY", state->snapshot.mode);
     }
     lv_obj_set_style_text_color(s_record_label,
-                                lv_color_hex(state->snapshot.recording ? 0xFF4D5A : 0xF2F5F7), 0);
+                                lv_color_hex(state->command_pending || state->saving || !state->recording_valid
+                                    ? 0xFFCC66 : state->recording ? 0xFF4D5A : 0xF2F5F7), 0);
     lv_label_set_text_fmt(s_spec_label, "%s  %s",
                           state->snapshot.mode, state->snapshot.parameters_valid ? state->snapshot.parameters : "--");
     char capacity[16], battery[8];

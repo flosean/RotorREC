@@ -3,8 +3,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifndef RR_CONTROLLER_HOST_TEST
 #include "esp_err.h"
 #include "esp_gap_ble_api.h"
+#endif
 
 typedef enum {
     DJI_ACTION2_IDLE,

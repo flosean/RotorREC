@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#11151b"><title>RotorREC Configurator</title>
+  <link rel="stylesheet" href="style.css"><script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#connection"><span class="mark">R</span><span>RotorREC<small>CONFIGURATOR</small></span></a>
+    <nav aria-label="設定區域"><a href="#connection">01 <span>裝置連線</span></a><a href="#camera-section">02 <span>相機與設定</span></a><a href="#firmware-section">03 <span>韌體刷寫</span></a><a href="#log-section">04 <span>操作紀錄</span></a></nav>
+    <div class="sidebar-foot"><span class="dot"></span> LOCAL / WEB SERIAL<br><small>ESP32-C3 · ESP32-C6</small></div>
+  </aside>
+  <main>
+    <header><div><p class="eyebrow">CAMERA CONTROL, CONNECTED.</p><h1>設定你的 RotorREC</h1><p>透過飛控 USB，管理相機、調整設定與更新韌體。</p></div><span id="connection-badge" class="badge">尚未連線</span></header>
+    <div id="support" class="notice" role="status">使用桌面 Chrome 或 Edge，從 localhost 或 HTTPS 開啟。</div>
+    <div class="notice warning">操作前請拆除螺旋槳、關閉 Betaflight Configurator，並確認 RotorREC 有供電。完成後請將<strong>飛控重新上電</strong>以恢復遙控與 OSD。</div>
+    <section id="connection" class="card">
+      <div class="section-heading"><div><p class="eyebrow">01 / CONNECTION</p><h2>連接飛控</h2></div><span class="label">115200 · 8N1</span></div>
+      <div class="connection-row"><label>RotorREC 所接 UART <input id="uart" type="number" min="1" max="20" step="1" placeholder="留空：單一 MSP UART 自動選取"></label><button id="connect" class="primary">選擇序列埠並連線</button><button id="disconnect" disabled>斷線</button></div>
+      <label class="check"><input id="direct" type="checkbox">飛控已在 Passthrough（上次操作後未將飛控重新上電）</label>
+      <p class="hint">UART 須先在 Betaflight 啟用 MSP，速度 115200。首次安裝或舊單槽韌體仍需以 ESP USB 安裝完整雙槽韌體。</p>
+      <div class="stats"><div><small>板型</small><strong id="board">—</strong></div><div><small>目前韌體</small><strong id="version">—</strong></div><div><small>相機連線</small><strong id="phase">—</strong></div><div><small>相機電量</small><strong id="battery">—</strong></div></div>
+      <div class="status-row"><span id="device-status">連線後讀取裝置狀態。</span><button id="refresh" data-device disabled>重新讀取</button></div>
+      <p id="pair-code" class="pair-code" hidden></p><p id="pending" class="hint"></p>
+    </section>
+    <section id="camera-section" class="card">
+      <div class="section-heading"><div><p class="eyebrow">02 / CAMERA & SETTINGS</p><h2>相機與基本設定</h2></div><span class="label">保存後重啟 ESP</span></div>
+      <fieldset id="camera-controls" disabled><legend class="sr-only">相機協定</legend><div class="connection-row"><label>相機型號 / 通訊協定<select id="camera"><option value="2">DJI Action 2</option><option value="1">DJI R SDK（Action 4 路徑）</option><option value="3">GoPro（Open GoPro BLE）</option></select></label><button id="save-camera" class="primary">保存相機並重啟</button><button id="pair">重新配對</button></div></fieldset>
+      <p class="hint">選擇的是已實作的通訊協定。GoPro 與其他型號的相容性仍需實機驗證；配對時可能需要在相機確認。維護前讓相機保持待機。</p>
+      <fieldset id="settings-controls" disabled><legend class="sr-only">基本設定</legend><div class="settings-grid">
+        <label>遙控錄影開關<select id="user"><option value="40">USER1</option><option value="41">USER2</option><option value="42">USER3</option><option value="43">USER4</option></select></label>
+        <label>OSD 顯示行數<select id="osd"><option value="2">2 行 · 基本資訊</option><option value="4">4 行 · 擴充資訊</option></select></label>
+        <label>LED 亮度 (%)<input id="led" type="number" min="1" max="100" step="1" value="5"></label>
+        <label>低電量警告 (%)<input id="low-battery" type="number" min="0" max="100" step="1" value="0"><small>0 = 關閉警告</small></label>
+      </div><label class="check"><input id="link-pause" type="checkbox">Link Pause：暫停相機 BLE 連線與錄影控制，保留配對</label><div class="actions"><button id="save-settings" class="primary">保存設定並重啟</button><span class="hint">4 行模式需要在 Betaflight 放置 Custom Messages 1–4。</span></div></fieldset>
+    </section>
+    <section id="firmware-section" class="card">
+      <div class="section-heading"><div><p class="eyebrow">03 / FIRMWARE</p><h2>更新 RotorREC 韌體</h2></div><span class="label">雙槽 OTA</span></div>
+      <label class="file-picker">選取本機更新包 <input id="package" type="file" accept=".zip,application/zip"><span>RotorREC update.zip · 自動檢查板型與 SHA-256</span></label>
+      <p id="package-info" class="hint">選擇由 RotorREC pack 工具產生的更新 ZIP。不要選 bootloader、factory 或單獨的 BIN。</p>
+      <div class="actions"><button id="flash" class="primary" disabled>開始刷寫</button><button id="cancel" class="danger" disabled>取消刷寫</button><span id="progress-text" role="status">尚未開始</span></div>
+      <progress id="progress" value="0" max="100" aria-label="韌體傳輸進度"></progress>
+      <p class="hint">只更新 RotorREC，不更新飛控。傳送 100% 後仍須完成校驗及重啟驗證。請保持分頁在前景、避免電腦睡眠，並使用可信任的韌體來源。</p>
+    </section>
+    <section id="log-section" class="card"><div class="section-heading"><div><p class="eyebrow">04 / ACTIVITY</p><h2>操作紀錄</h2></div><button id="clear-log">清除</button></div><p id="result" role="status" aria-live="polite">準備就緒。</p><pre id="log" aria-label="操作紀錄"></pre></section>
+    <footer>RotorREC Configurator · 本機執行，韌體不會上傳至伺服器。<a href="README.md">操作說明</a></footer>
+  </main>
+</body></html>

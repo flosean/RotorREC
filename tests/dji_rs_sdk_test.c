@@ -6,7 +6,8 @@
 #include "../main/camera/dji/dji_rs_sdk.c"
 
 static TickType_t clock_ms;
-static int link = PROTOCOL_CONNECTED;
+static connect_state_t link = PROTOCOL_CONNECTED;
+static int connect_result, subscribe_result;
 static unsigned record_commands;
 static int record_result;
 static bool confirm_record, target_record, drop_link;
@@ -30,12 +31,12 @@ void data_register_status_update_callback(void (*callback)(void *)) { assert(cal
 void data_register_new_status_update_callback(void (*callback)(void *)) { assert(callback == new_camera_status_callback); }
 void update_camera_state_handler(void *data) { (void)data; }
 void update_new_camera_state_handler(void *data) { (void)data; }
-int connect_logic_protocol_connect(uint32_t id, size_t size, int8_t *mac,
-                                   int a, int b, uint16_t code, int c) {
-    (void)id; (void)size; (void)mac; (void)a; verify_mode = b; (void)code; (void)c; return 0;
+int connect_logic_protocol_connect(uint32_t id, uint8_t size, const int8_t *mac,
+                                   uint32_t a, uint8_t b, uint16_t code, uint8_t c) {
+    (void)id; (void)size; (void)mac; (void)a; verify_mode = b; (void)code; (void)c; return connect_result;
 }
-int subscript_camera_status(int mode, int frequency) { (void)mode; (void)frequency; return 0; }
-int connect_logic_get_state(void) { return link; }
+int subscript_camera_status(int mode, int frequency) { (void)mode; (void)frequency; return subscribe_result; }
+connect_state_t connect_logic_get_state(void) { return link; }
 bool is_camera_recording(void) { return s_snapshot.recording; }
 version_query_response_frame_t *command_logic_get_version(void) {
     if (version_result < 0) return NULL;
@@ -63,6 +64,13 @@ int main(void)
     version_result = -1;
     assert(dji_rs_sdk_connect(1234, true) == DJI_RSDK_CONNECT_FAILED);
     version_result = 0;
+    connect_result = CONNECT_PROTOCOL_REJECTED;
+    assert(dji_rs_sdk_connect(1234, true) == DJI_RSDK_CONNECT_REJECTED);
+    connect_result = -1;
+    assert(dji_rs_sdk_connect(1234, true) == DJI_RSDK_CONNECT_FAILED);
+    connect_result = 0; subscribe_result = -1;
+    assert(dji_rs_sdk_connect(1234, true) == DJI_RSDK_CONNECT_SUBSCRIBE_FAILED);
+    subscribe_result = 0;
     camera_status_push_command_frame report = {.camera_mode = CAMERA_MODE_NORMAL,
         .camera_status = CAMERA_STATUS_PHOTO_OR_RECORDING, .camera_bat_percentage = 85,
         .video_resolution = VIDEO_RESOLUTION_4K_16_9, .fps_idx = FPS_60,

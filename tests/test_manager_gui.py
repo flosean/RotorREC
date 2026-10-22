@@ -29,7 +29,8 @@ class ManagerGuiTests(unittest.TestCase):
                 raise RuntimeError("test worker timeout")
             if len(calls) == 2:
                 raise RuntimeError("injected transport failure")
-            log(json.dumps({"settings_raw": m.encode_settings(dict(user_mode_id=42, osd_lines=4,
+            passthrough()
+            log(json.dumps({"camera": 3, "settings_raw": m.encode_settings(dict(user_mode_id=42, osd_lines=4,
                 led_percent=25, low_battery_percent=20, link_paused=False, owns_extra_lines=True))}))
 
         def widgets(parent):
@@ -65,6 +66,8 @@ class ManagerGuiTests(unittest.TestCase):
             release.set()
             pump_until(lambda: str(port.cget("state")) == "normal")
             self.assertEqual([w.get() for w in (user, osd, led, battery)], ["3", "4", "25", "20"])
+            self.assertEqual(camera.get(), "gopro")
+            self.assertTrue(root.getvar(direct.cget("variable")))
             for control in (camera, user, osd):
                 self.assertEqual(str(control.cget("state")), "readonly")
             for control in (port, uart, led, battery, direct):
@@ -72,6 +75,7 @@ class ManagerGuiTests(unittest.TestCase):
             # A new connection must read its own status before saving settings.
             port.set("FAKE_B")
             port.event_generate("<<ComboboxSelected>>")
+            self.assertFalse(root.getvar(direct.cget("variable")))
             buttons["Save settings & restart"].invoke()
             self.assertEqual(len(calls), 1)
             entered.clear()

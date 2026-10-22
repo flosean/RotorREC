@@ -30,6 +30,9 @@ typedef struct {
 bool bf_api_supported(const uint8_t *payload, size_t length);
 bool bf_mode_map_parse(bf_mode_map_t *map, uint8_t permanent_id,
                        const uint8_t *payload, size_t length);
+/* Read all 32-ID MSP_BOXIDS pages before exposing a complete mapping. */
+bool bf_mode_map_read(bf_mode_map_t *map, uint8_t permanent_id,
+                     bool (*read_page)(uint8_t page, uint8_t ids[32], size_t *length));
 bool bf_mode_status_parse(const bf_mode_map_t *map, const uint8_t *payload,
                           size_t length, bf_mode_status_t *status);
 bf_record_action_t bf_record_policy_step(bf_record_policy_t *policy, uint32_t now_ms,

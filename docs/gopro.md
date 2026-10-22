@@ -18,7 +18,7 @@ Use the standard board build and initial USB installation described in [building
 2. Select GoPro in RotorREC and restart the ESP. It scans, bonds, discovers characteristics and restores response notifications. Session setup checks hardware readiness/API version, identifies a third-party client and finishes pairing through camera management.
 3. Select the camera's **Video** preset group. Photo and timelapse groups report unknown recording state to the shared controller and block recording commands. Configure video settings on the camera.
 4. Short-press BOOT to start/stop, or use the existing Betaflight USER switch. The USER switch still needs its initial inactive position. OSD reports actual encoding state and battery percentage.
-5. Hold BOOT for 1.2 seconds to request fresh pairing. Once the current transaction finishes, the worker disconnects, forgets the saved GoPro address and its BLE bond, then scans again. The DJI profile is separate.
+5. While idle/offline, hold BOOT for 1.2 seconds to request fresh pairing. Recording, saving, a pending command or connected unknown state blocks re-pairing. An accepted request makes the worker disconnect, forget the saved GoPro address and its BLE bond, then scan again. The DJI profile is separate.
 
 A saved GoPro reconnects automatically after link loss or module restart. Reconnection scans for its stored BLE address; a camera that changes its address or resets pairing may need another BOOT hold and pairing-mode setup. Discovery does not guarantee waking a powered-off camera whose BLE advertisements have stopped.
 

@@ -355,10 +355,49 @@ static bool configured_osd_tests(void)
     return true;
 }
 
+static uint8_t paged_ids[160];
+static size_t paged_count;
+static int failed_page;
+static unsigned page_calls;
+static bool read_mode_page(uint8_t page, uint8_t ids[32], size_t *length)
+{
+    assert(page == page_calls++);
+    if (page == failed_page) return false;
+    size_t offset = page * 32U;
+    *length = paged_count > offset ? paged_count - offset : 0;
+    if (*length > 32) *length = 32;
+    memcpy(ids, paged_ids + offset, *length);
+    return true;
+}
+static bool paged_mode_tests(void)
+{
+    for (unsigned i = 0; i < sizeof(paged_ids); ++i) paged_ids[i] = (uint8_t)(i + 90);
+    paged_ids[3] = 27; paged_ids[40] = 40;
+    bf_mode_map_t map;
+    failed_page = -1; paged_count = 45; page_calls = 0;
+    CHECK(bf_mode_map_read(&map, 40, read_mode_page));
+    CHECK(page_calls == 2 && map.mode_bit == 40 && map.failsafe_bit == 3);
+    paged_count = 64; page_calls = 0;
+    CHECK(bf_mode_map_read(&map, 40, read_mode_page) && page_calls == 3);
+    paged_count = 128; page_calls = 0;
+    CHECK(bf_mode_map_read(&map, 40, read_mode_page) && page_calls == 5);
+    paged_count = 129; page_calls = 0;
+    CHECK(!bf_mode_map_read(&map, 40, read_mode_page) && map.mode_bit == -1);
+    paged_count = 45; failed_page = 1; page_calls = 0;
+    CHECK(!bf_mode_map_read(&map, 40, read_mode_page) && map.mode_bit == -1);
+    failed_page = -1; paged_count = 32; page_calls = 0;
+    CHECK(!bf_mode_map_read(&map, 40, read_mode_page));
+    paged_count = 0; page_calls = 0;
+    CHECK(!bf_mode_map_read(&map, 40, read_mode_page));
+    paged_count = 45; paged_ids[41] = 40; page_calls = 0;
+    CHECK(!bf_mode_map_read(&map, 40, read_mode_page));
+    return true;
+}
+
 int main(void)
 {
     if (!codec_tests() || !status_tests() || !policy_tests() || !osd_tests() || !indicator_tests() ||
-        !settings_tests() || !configured_osd_tests()) return 1;
+        !settings_tests() || !configured_osd_tests() || !paged_mode_tests()) return 1;
     printf("PASS: %u checks (codec, mode mapping, failsafe, 20 switch cycles, OSD, LED patterns)\n", checks);
     return 0;
 }

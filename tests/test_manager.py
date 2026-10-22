@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 import struct
 import tempfile
+import types
 import unittest
+from unittest.mock import patch
 import zipfile
 
 spec = importlib.util.spec_from_file_location("manager", Path(__file__).parents[1] / "tools/rotorrec_manager.py")
@@ -92,6 +94,72 @@ class UpdatePort:
 
 
 class Checks(unittest.TestCase):
+    def test_cli_fragmented_comment_is_not_a_prompt(self):
+        for split in (b"#", b"# ", b"version\r\n#", b"version\r\n# "):
+            with self.subTest(split=split):
+                output = split + (b" Betaflight / STM32\r\n# " if split.endswith(b"#")
+                                  else b"Betaflight / STM32\r\n# ")
+                chunks = iter((split, output[len(split):], b""))
+                port = types.SimpleNamespace(write=lambda _: None,
+                                             read=lambda _: next(chunks, b""))
+                self.assertEqual(m.cli_response(port, b"version"), output.decode())
+
+    def test_update_recovers_lost_commit_ack_by_verifying_boot(self):
+        clock = [0.0]
+
+        class LostEndPort(UpdatePort):
+            def __init__(self):
+                super().__init__()
+                self.last_end = None
+                self.commands = []
+
+            def write(self, wire):
+                cmd, _, _, _ = m.Parser().feed(wire)[0]
+                self.commands.append(cmd)
+                if self.last_end is not None and clock[0] - self.last_end >= 30:
+                    meta = m.image_metadata(self.data)
+                    self.version, self.elf = meta["version"], meta["elf_sha256"]
+                    self.last_end = None
+                    self.cache.clear()
+                if cmd == m.END:
+                    super().write(wire)
+                    self.output = b""  # Commit succeeds but every END reply is lost.
+                    self.last_end = clock[0]
+                elif self.last_end is None:
+                    super().write(wire)
+                # The committed device ignores a different session until expiry.
+
+            def read(self, size):
+                clock[0] += .1
+                return super().read(size)
+
+        port = LostEndPort()
+        client = m.Client(port)
+        with patch.object(m.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(m.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            client.info(hello=True)
+            result = client.update(m.image_metadata(image()), image(), progress=lambda _: None)
+        self.assertEqual(result["elf_sha256"], m.image_metadata(image())["elf_sha256"])
+        self.assertTrue(port.committed)
+        self.assertNotIn(m.ABORT, port.commands)
+        self.assertNotIn(m.REBOOT, port.commands)
+
+    def test_pair_waits_for_slow_dji_handshake_and_closes_session(self):
+        clock = [0]
+        commands = []
+        port = types.SimpleNamespace(open=lambda: None, close=lambda: commands.append("closed"))
+        client = types.SimpleNamespace(
+            info=lambda hello=False: dict(phase=7 if clock[0] >= 70 else 3, command_pending=0),
+            request=lambda cmd, **kw: commands.append(cmd))
+        args = m.argparse.Namespace(action="pair", port="FAKE", direct=True)
+        with patch.dict("sys.modules", serial=types.SimpleNamespace(Serial=lambda **kw: port)), \
+             patch.object(m, "Client", return_value=client), \
+             patch.object(m.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(m.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            m.run_device(args, log=lambda _: None)
+        self.assertEqual(clock[0], 70)
+        self.assertEqual(commands, [m.PAIR, m.EXIT, "closed"])
+
     def test_settings_golden_and_validation(self):
         defaults = dict(user_mode_id=40, osd_lines=2, led_percent=5,
                         low_battery_percent=0, link_paused=False, owns_extra_lines=False)
@@ -144,7 +212,7 @@ class Checks(unittest.TestCase):
 
     def test_reboot_detects_settings_loss(self):
         client = m.Client(FakePort())
-        client.info = lambda hello=False: dict(pending_verify=0, settings_raw=0x01000050)
+        client.info = lambda **kw: dict(pending_verify=0, settings_raw=0x01000050)
         with self.assertRaisesRegex(RuntimeError, "Settings did not persist"):
             client.reboot(settings_raw=0x01040054)
 
@@ -155,6 +223,15 @@ class Checks(unittest.TestCase):
         self.assertIn("Link Pause", result)
         self.assertIn("Recording status unavailable", result)
         self.assertNotIn("Standby", result)
+
+    def test_status_distinguishes_busy_and_gopro_pairing(self):
+        value = dict(camera=3, phase=3, recording_valid=0)
+        self.assertNotIn("Pairing code", m.describe_status(value))
+        self.assertIn("Pairing code: 0123", m.describe_status(value | dict(camera=1, pairing_code=123)))
+        value.update(phase=7, recording_valid=1, recording=0, saving=1)
+        self.assertIn("Camera busy / saving", m.describe_status(value))
+        self.assertNotIn("Standby", m.describe_status(value))
+        self.assertIn("Waiting for camera command", m.describe_status(value | dict(command_pending=1)))
 
     def test_packets(self):
         wire = m.encode(m.DATA, 0x12345678, 19, bytes(range(256)) * 4)
@@ -212,9 +289,27 @@ class Checks(unittest.TestCase):
 
     def test_reboot_detects_same_version_rollback(self):
         client = m.Client(FakePort())
-        client.info = lambda hello=False: dict(version="1.1.0", pending_verify=0, elf_sha256="old")
+        client.info = lambda **kw: dict(version="1.1.0", pending_verify=0, elf_sha256="old")
         with self.assertRaisesRegex(RuntimeError, "different image"):
             client.reboot(version="1.1.0", elf_sha256="new")
+
+    def test_pending_boot_reset_restarts_handshake_and_detects_rollback(self):
+        client = m.Client(FakePort())
+        hellos = []
+
+        def status(hello=False, **kw):
+            hellos.append(hello)
+            if len(hellos) == 1:
+                client.sequence = 1
+                return dict(pending_verify=1)
+            if len(hellos) == 2:
+                raise TimeoutError("pending image reset")
+            return dict(pending_verify=0, version="1.1.0", elf_sha256="old")
+
+        client.info = status
+        with patch.object(m.time, "sleep"), self.assertRaisesRegex(RuntimeError, "different image"):
+            client.wait_for_boot(version="1.1.0", elf_sha256="new")
+        self.assertEqual(hellos, [True, False, True])
 
     def test_update_roundtrip_and_lost_ack(self):
         port = UpdatePort()

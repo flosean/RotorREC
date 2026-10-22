@@ -50,12 +50,16 @@ def describe_status(value):
     phase = value.get("phase", 0)
     camera = {1: "DJI R SDK", 2: "DJI Action 2", 3: "GoPro"}.get(value.get("camera"), "Unknown")
     recording = "Recording" if value.get("recording") else "Standby"
-    if not value.get("recording_valid"):
+    if value.get("command_pending"):
+        recording = "Waiting for camera command"
+    elif value.get("saving"):
+        recording = "Camera busy / saving"
+    elif not value.get("recording_valid"):
         recording = "Recording status unavailable"
     battery = f"{value['battery']}%" if value.get("battery_valid") else "Unavailable"
     result = (f"RotorREC {value.get('version', '?')} | {camera}\n"
               f"{PHASES[phase] if 0 <= phase < len(PHASES) else 'Unknown state'} | {recording} | Battery: {battery}")
-    if phase in (3, 5):
+    if phase in (3, 5) and value.get("camera") != CAMERAS["gopro"]:
         result += f"\nPairing code: {value.get('pairing_code', 0):04d} — check the camera screen."
     if value.get("pending_verify"):
         result += "\nChecking the new firmware…"
@@ -174,8 +178,8 @@ class Client:
             self.parser = Parser()  # Drop a truncated reply before retrying the identical request.
         raise TimeoutError("No response. Check power/UART; a previous session expires after 30 seconds.")
 
-    def info(self, hello=False):
-        value = json.loads(self.request(HELLO if hello else INFO))
+    def info(self, hello=False, **request_options):
+        value = json.loads(self.request(HELLO if hello else INFO, **request_options))
         if value.get("product") != "RotorREC" or value.get("protocol") != 1:
             raise ValueError("Unsupported device")
         return value
@@ -185,13 +189,19 @@ class Client:
             self.request(REBOOT, timeout=1, retries=1)
         except TimeoutError:
             pass  # The ESP may reboot before the reply reaches the host.
+        return self.wait_for_boot(version, camera, elf_sha256, settings_raw)
+
+    def wait_for_boot(self, version=None, camera=None, elf_sha256=None, settings_raw=None):
+        # A lost END ACK is also recoverable: the receiver reboots on session expiry.
+        # Only HELLO/INFO here, so we never extend the old committed session.
         deadline = time.monotonic() + 40
         self.session = secrets.randbelow(0xFFFFFFFF) + 1
         self.sequence = 0
         self.parser = Parser()
         while time.monotonic() < deadline:
             try:
-                value = self.info(hello=self.sequence == 0)
+                value = self.info(hello=self.sequence == 0,
+                                  timeout=min(3, max(.1, deadline - time.monotonic())), retries=1)
                 if value.get("pending_verify"):
                     time.sleep(.5)
                     continue
@@ -205,6 +215,11 @@ class Client:
                     raise RuntimeError("Settings did not persist or the device booted older firmware")
                 return value
             except TimeoutError:
+                # A pending image can roll back after accepting our HELLO.
+                if self.sequence:
+                    self.session = secrets.randbelow(0xFFFFFFFF) + 1
+                    self.sequence = 0
+                    self.parser = Parser()
                 time.sleep(.2)
         raise TimeoutError("Reboot could not be verified; reconnect and inspect device status")
 
@@ -230,7 +245,7 @@ class Client:
         payload = struct.pack("<II32s32s32s", len(image), metadata["layout"],
                               metadata["board"].encode(), metadata["version"].encode(),
                               bytes.fromhex(metadata["sha256"]))
-        committed = False
+        commit_started = False
         try:
             self.request(BEGIN, payload)
             last_percent = -1
@@ -245,11 +260,19 @@ class Client:
                     last_percent = percent
             if cancelled():
                 raise RuntimeError("Update cancelled; the current firmware remains selected")
-            self.request(END)
-            committed = True
+            # After END is sent, a missing reply cannot prove that commit failed.
+            commit_started = True
+            try:
+                self.request(END)
+            except TimeoutError:
+                progress("Final acknowledgement lost; waiting for automatic restart and verifying the image.")
+                return self.wait_for_boot(version=metadata["version"], elf_sha256=metadata["elf_sha256"])
+            except DeviceError:
+                commit_started = False
+                raise
             return self.reboot(version=metadata["version"], elf_sha256=metadata["elf_sha256"])
         except Exception:
-            if not committed:
+            if not commit_started:
                 try:
                     self.request(ABORT, timeout=1, retries=1)
                 except (TimeoutError, DeviceError):
@@ -262,8 +285,11 @@ def cli_response(port, command, timeout=3):
     data = bytearray()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        data.extend(port.read(2048))
-        if data.endswith(b"# ") or data.endswith(b"#"):
+        chunk = port.read(2048)
+        data.extend(chunk)
+        # Comments also begin '# '. Require a full prompt and an idle read,
+        # otherwise a USB packet boundary inside '# Betaflight' truncates it.
+        if not chunk and data.endswith(b"\n# "):
             return data.decode("ascii", errors="replace")
     raise TimeoutError("Betaflight CLI did not respond. Close Configurator; if already in passthrough use --direct.")
 
@@ -320,7 +346,9 @@ def run_device(args, log=print, entered=lambda: None, cancelled=lambda: False):
             value = client.reboot(camera=choice)
         elif args.action == "pair":
             client.request(PAIR)
-            for _ in range(60):
+            # DJI may spend 30s scanning, 30s discovering GATT and 30s awaiting approval.
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
                 time.sleep(1)
                 value = client.info()
                 log(json.dumps(value))
@@ -390,6 +418,7 @@ def gui():
     def forget_settings(event=None):
         nonlocal settings_ready
         settings_ready = False
+        direct.set(False)
     port.bind("<<ComboboxSelected>>", forget_settings)
     port.bind("<KeyRelease>", forget_settings)
     uart.bind("<KeyRelease>", forget_settings)
@@ -468,6 +497,8 @@ def gui():
                 if item.startswith("{"):
                     try:
                         value = json.loads(item)
+                        if value.get("camera") in CAMERAS.values():
+                            camera.set(next(name for name, ident in CAMERAS.items() if ident == value["camera"]))
                         if "settings_raw" in value:
                             saved = decode_settings(value.get("saved_settings_raw", value["settings_raw"]))
                             for key, field in fields.items():

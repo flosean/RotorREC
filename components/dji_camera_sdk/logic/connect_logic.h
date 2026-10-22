@@ -38,6 +38,8 @@ int connect_logic_ble_connect(bool is_reconnecting);
 
 int connect_logic_ble_disconnect(void);
 
+/* Protocol result: 0 accepted, -1 transport/malformed reply, -2 explicit rejection. */
+#define CONNECT_PROTOCOL_REJECTED (-2)
 int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, const int8_t *mac_addr,
                                     uint32_t fw_version, uint8_t verify_mode, uint16_t verify_data,
                                     uint8_t camera_reserved);

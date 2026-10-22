@@ -201,7 +201,21 @@ static void settings_tests(void)
         command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, previous);
         assert(transact() == ESP_ERR_INVALID_STATE && saved_settings == previous);
         command(RR_REBOOT); assert(transact() == ESP_ERR_INVALID_STATE);
+        command(RR_EXIT); assert(transact() == ESP_OK);
+        unsigned before = pairs;
+        management_button_pair();
+        assert(pairs == before); // BOOT must obey the same camera-busy gate.
+        request = (rr_packet_t){.command = RR_HELLO, .session = 123};
+        assert(transact() == ESP_OK);
     }
+    command(RR_EXIT); assert(transact() == ESP_OK);
+    camera = (camera_controller_state_t){.phase = CAMERA_PHASE_READY, .recording_valid = true};
+    unsigned before = pairs;
+    management_button_pair(); assert(pairs == before + 1);
+    camera = (camera_controller_state_t){.phase = CAMERA_PHASE_RECONNECTING, .recording = true};
+    management_button_pair(); assert(pairs == before + 2); // Offline recovery remains available.
+    request = (rr_packet_t){.command = RR_HELLO, .session = 123};
+    assert(transact() == ESP_OK);
     camera = (camera_controller_state_t){0}; // Offline is available for recovery.
     fail_open = ESP_FAIL;
     command(RR_SET_SETTINGS); request.length = 4; rr_put32(request.payload, previous);

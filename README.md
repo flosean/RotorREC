@@ -8,7 +8,7 @@ Current firmware version: **1.2.0-dev (new features pending hardware validation)
 
 ## Features
 
-- Betaflight passthrough manager: select Action 2 / DJI R SDK / GoPro, pair cameras, and update over the existing UART using dual app slots and rollback. See [passthrough setup](docs/passthrough.md); new functionality is not yet hardware-validated.
+- Chrome/Edge Web Serial configurator and Python passthrough manager: select Action 2 / DJI R SDK / GoPro, pair cameras, and update over the existing UART using dual app slots and rollback. See [passthrough setup](docs/passthrough.md); new functionality is not yet hardware-validated.
 - Saved USER1-USER4 selection, two/four OSD lines, C3 LED brightness and optional low-battery warning. Four-line DJI R SDK telemetry uses individually validated camera fields. See [camera settings](docs/camera-settings.md).
 - Persistent Link Pause retains pairing, disables BLE and clears the owned camera OSD lines. Resume from the manager or by holding BOOT for 1.2 seconds.
 - DJI Action 2 legacy BLE/DUML: pairing, saved camera profiles, automatic reconnection, recording control, actual recording state, and battery level.
@@ -17,7 +17,7 @@ Current firmware version: **1.2.0-dev (new features pending hardware validation)
 - GoPro official Open GoPro BLE: runtime-selectable pairing, saved target, reconnection, video start/stop, actual encoding status, battery, and keepalive. Hardware validation is pending; see [GoPro setup](docs/gopro.md).
 - Betaflight USER1-USER4 recording control. USER1 is the default; assign the AUX channel and switch range in Betaflight Modes.
 - OSD Custom Messages 1/2 for camera status/battery by default; optional 3/4 for recording settings/storage. Action 2 and GoPro extra fields remain unavailable.
-- Short-press BOOT to toggle recording; hold for 1.2 seconds to scan and pair again, or resume when Link Pause is active.
+- Short-press BOOT to toggle recording; hold for 1.2 seconds to scan and pair again when idle/offline, or resume when Link Pause is active. Fresh pairing is blocked while recording, saving, awaiting a command or connected with unknown state.
 - ESP32-C3-Zero RGB status indicator or ESP32-C6-LCD-1.47 display interface.
 
 ## Support status
@@ -50,6 +50,8 @@ The integration targets **Betaflight 2025.12 or newer, with MSP API 1.47 or newe
 
 ## Quick start
 
+For the complete first-use sequence, success checks and recovery steps, see the [end-to-end user guide](docs/user-journey.md) (Traditional Chinese).
+
 Use **ESP-IDF v5.5.5**. Open an initialized ESP-IDF terminal, then clone the repository:
 
 ```sh
@@ -77,7 +79,15 @@ Action 2 is the default. Select DJI R SDK or GoPro with the [passthrough manager
 
 ## Camera settings and Link Pause
 
-The manager requires Python 3.10+ with pyserial 3.5; the GUI also uses tkinter:
+Open the [Chrome configurator](tools/web-configurator/README.md) from a local server:
+
+```sh
+python -m http.server 8000 --bind 127.0.0.1 --directory tools/web-configurator
+```
+
+Visit `http://127.0.0.1:8000` in desktop Chrome or Edge. It connects directly through Web Serial and provides camera selection, pairing, saved settings and ZIP firmware updates. Python here only serves static files; serial communication needs no Python packages. Use HTTPS when hosting it elsewhere.
+
+The alternative Python manager requires Python 3.10+ with pyserial 3.5; its GUI also uses tkinter:
 
 ```sh
 python -m pip install pyserial==3.5
@@ -128,7 +138,7 @@ python tests/test_manager_gui.py
 
 Tests cover MSP framing, USER policy, two/four-line OSD, LED brightness, actual DJI telemetry callbacks and management storage/update failures. The GUI test requires Python with tkinter and pyserial. Current results and hardware acceptance are tracked in [verification status](docs/verification-status.md).
 
-On 2026-10-02, 11,956 Betaflight checks, 15 Python manager tests, the hidden Tk GUI regression, DJI callback tests and GoPro/management suites passed. Both ESP-IDF v5.5.5 board builds passed. These software results do not establish BLE radio behavior, physical OSD output or power-cut recovery of the new features.
+On 2026-10-22, the full user-flow software audit passed 11,965 Betaflight checks, 17 Python manager tests, the hidden Tk GUI regression, LCD-text and DJI controller/adapter tests, and GoPro/management suites. Both ESP-IDF v5.5.5 board builds passed from fresh build directories and matching update packages were verified. These software results do not establish BLE radio behavior, physical OSD output or power-cut recovery of the new features. See the [audit findings and evidence](docs/verification-status.md).
 
 ## Documentation and licensing
 

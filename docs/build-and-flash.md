@@ -25,7 +25,7 @@ Component Manager downloads LVGL on the first C6 build. C3 excludes LCD dependen
 
 ## Output and version
 
-`version.txt` supplies version 1.1.0. Application files are `rotorrec_esp32c3.bin` and `rotorrec_esp32c6.bin`; project identity is embedded in the app descriptor so the update receiver can reject the wrong board. Each contains all camera adapters; selection is stored in NVS.
+`version.txt` supplies the current version, **1.2.0-dev**. Application files are `rotorrec_esp32c3.bin` and `rotorrec_esp32c6.bin`; project identity is embedded in the app descriptor so the update receiver can reject the wrong board. Each contains all camera adapters; selection is stored in NVS.
 
 Use `idf.py flash` (or the wrapper above) for the first USB install: it writes the bootloader, partition table, initial OTA metadata and app. An app-only update cannot migrate a 1.0 installation. Avoid `erase-flash` if retaining existing pairing profiles. Existing NVS remains at 0x9000 with size 0x6000.
 
@@ -55,7 +55,9 @@ Windows requires Visual Studio C++ Build Tools and the Windows SDK:
 ```powershell
 .\tools\test-betaflight.ps1
 .\tools\test-gopro.ps1
+.\tools\test-dji.ps1
 .\tools\test-management.ps1
+python tests/test_manager_gui.py
 ```
 
 Host tests and build commands do not flash hardware. See [verification status](verification-status.md) for hardware results.

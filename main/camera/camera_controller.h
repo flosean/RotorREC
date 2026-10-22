@@ -1,6 +1,8 @@
 #pragma once
 
+#ifndef RR_CONTROLLER_HOST_TEST
 #include "esp_err.h"
+#endif
 #include "camera_types.h"
 
 esp_err_t camera_controller_init(void);

@@ -70,6 +70,17 @@ static bool query(uint16_t command, msp_v2_reply_t *reply)
     return exchange(command, frame, length, reply) && !reply->error;
 }
 
+static bool query_mode_page(uint8_t page, uint8_t ids[32], size_t *count)
+{
+    uint8_t frame[10];
+    msp_v2_reply_t reply;
+    size_t length = msp_v2_build_request(MSP_BOXIDS, &page, 1, frame, sizeof(frame));
+    if (!exchange(MSP_BOXIDS, frame, length, &reply) || reply.error || reply.length > 32) return false;
+    *count = reply.length;
+    memcpy(ids, reply.payload, *count);
+    return true;
+}
+
 static void bridge_task(void *argument)
 {
     (void)argument;
@@ -128,8 +139,7 @@ static void bridge_task(void *argument)
 
         if ((uint32_t)(now_ms() - map_ms) >= 5000) {
             bf_mode_map_t next_map;
-            bool next_valid = query(MSP_BOXIDS, &reply) &&
-                bf_mode_map_parse(&next_map, settings->user_mode_id, reply.payload, reply.length);
+            bool next_valid = bf_mode_map_read(&next_map, settings->user_mode_id, query_mode_page);
             if (!next_valid || !map_valid || next_map.mode_bit != map.mode_bit ||
                 next_map.failsafe_bit != map.failsafe_bit) policy = (bf_record_policy_t) {0};
             map_valid = next_valid;

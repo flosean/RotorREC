@@ -1,10 +1,9 @@
+#ifdef RR_CONTROLLER_HOST_TEST
+#include "camera_controller_test_platform.h"
+#else
 #include "camera_controller.h"
 #include "gopro/gopro.h"
 #include "management/management.h"
-#include <stdatomic.h>
-static atomic_bool s_initialized;
-static atomic_bool s_pair_queued;
-static camera_protocol_t s_selected;
 #include <stdbool.h>
 
 #include "esp_log.h"
@@ -17,6 +16,11 @@ static camera_protocol_t s_selected;
 #include "connect_logic.h"
 #include "dji/dji_action2.h"
 #include "dji/dji_rs_sdk.h"
+#endif
+#include <stdatomic.h>
+static atomic_bool s_initialized;
+static atomic_bool s_pair_queued;
+static camera_protocol_t s_selected;
 
 static const char *TAG = "CAMERA_CONTROLLER";
 
@@ -213,7 +217,10 @@ static void pair_camera(bool use_saved)
         s_phase = CAMERA_PHASE_VERIFYING;
         dji_rs_sdk_connect_result_t result = dji_rs_sdk_connect(s_pairing_code, remembered);
         s_protocol = CAMERA_PROTOCOL_DJI_RSDK;
-        s_phase = result == DJI_RSDK_CONNECT_READY ? CAMERA_PHASE_READY : CAMERA_PHASE_PAIR_REJECTED;
+        s_phase = result == DJI_RSDK_CONNECT_READY ? CAMERA_PHASE_READY :
+                  result == DJI_RSDK_CONNECT_REJECTED ? CAMERA_PHASE_PAIR_REJECTED :
+                  result == DJI_RSDK_CONNECT_SUBSCRIBE_FAILED ? CAMERA_PHASE_SUBSCRIBE_FAILED :
+                  CAMERA_PHASE_SCAN_FAILED;
         if (result == DJI_RSDK_CONNECT_READY) {
             ble_diagnostics_t diagnostics;
             ble_get_diagnostics(&diagnostics);

@@ -4,7 +4,7 @@ Passthrough settings and update requirements are specified in [passthrough setup
 
 # RotorREC requirements
 
-Updated: 2026-10-02 (1.2 development settings; hardware acceptance pending).
+Updated: 2026-10-22 (1.2 user-flow software audit; hardware acceptance pending).
 
 Action 2 scope: connection and reconnection, actual recording state, start/stop control, and battery level. Recording duration and storage-capacity research are deferred and do not block this release.
 
@@ -45,7 +45,7 @@ Use only the official public Open GoPro BLE specification. The runtime-selected 
 - After either device restarts, reconnect to the saved camera and restore the session without another manual confirmation.
 - After unexpected loss, scan for the saved camera approximately once per second without power-saving backoff. Stop scanning when found; retain connection and discovery timeouts.
 - Restore legacy notifications, session, and keepalive before accepting recording requests.
-- Holding BOOT for 1.2 seconds cancels reconnection and starts fresh discovery/pairing.
+- Holding BOOT for 1.2 seconds starts fresh discovery/pairing when idle or offline. A live recording, saving, pending command or connected unknown state blocks re-pairing; an in-progress reconnect transaction must finish before discovery can start.
 - Confirm that accepted pairing displays the Bluetooth icon on the camera.
 - Legacy pairing retains fixed fields from an official remote flow, verified only with the current camera. Identify controller ID, serial, pairing code, and CRC fields before generalizing them.
 
@@ -59,7 +59,7 @@ Use only the official public Open GoPro BLE specification. The runtime-selected 
 ## Local interface
 
 - BOOT short press: toggle recording when ready.
-- BOOT hold for 1.2 seconds: scan/pair again, or persist resume and restart when Link Pause is active.
+- BOOT hold for 1.2 seconds: scan/pair again when idle/offline (same busy gate as management), or persist resume and restart when Link Pause is active.
 - RST: hardware reset only.
 - C3 RGB: steady green for confirmed standby, slow green for recording, slow red for disconnected/failed search, fast red for discovery/pairing/reconnection, and fast yellow for unknown/pending/storage state. Unknown status must not appear green.
 - LCD: connection stage, pairing code, protocol, reconnection, recording state, settings, battery, duration, and diagnostics.
@@ -70,7 +70,7 @@ Use only the official public Open GoPro BLE specification. The runtime-selected 
 UART and OSD functionality have been tested on hardware and confirmed working by the project owner. The following requirements remain the basis for implementation and regression checks.
 
 - Target Betaflight 2025.12 or newer with MSP API 1.47 or newer.
-- Use 3.3 V UART1, 115200 baud, 8N1; C6 defaults to GPIO18 TX/GPIO19 RX, C3 to GP0 TX/GP1 RX. Cross TX/RX with an unused FC MSP UART and share ground. Pins are configurable.
+- Use 3.3 V UART1, 115200 baud, 8N1; C6 uses GPIO18 TX/GPIO19 RX, C3 uses GP0 TX/GP1 RX. Cross TX/RX with an unused FC MSP UART and share ground. The supported update identity requires these fixed pins and baud rate.
 - Check `MSP_API_VERSION` before enabling automatic control.
 - Read `MSP_FC_VARIANT`, `MSP_BOXIDS`, and `MSP_STATUS`. AUX assignment and ranges remain in BF Modes, without a fixed raw RC channel.
 - Write native MSPv2 `MSP2_SET_TEXT (0x3007)`, types 7-10 for Custom Messages 1-4, at most 16 bytes per line.

@@ -34,6 +34,7 @@ static uint8_t s_sha[32];
 static char s_version[32];
 static mbedtls_sha256_context s_hash;
 static bool s_updating, s_committed;
+static bool camera_busy(void);
 
 esp_err_t management_init(void)
 {
@@ -75,7 +76,7 @@ void management_button_pair(void)
 {
     if (management_active()) return;
     if (s_settings.link_paused) atomic_store(&s_resume_requested, true);
-    else camera_controller_request_pairing();
+    else if (!camera_busy()) camera_controller_request_pairing();
 }
 static void abort_update(void)
 {

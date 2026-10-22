@@ -4,6 +4,46 @@ Updated: 2026-10-22. Firmware version: 1.2.0-dev (unreleased; new hardware accep
 
 **The project owner confirms that Betaflight UART communication and OSD functionality have been tested on real hardware, used successfully, and work correctly.** This replaces the earlier pending-hardware status for UART and OSD. The confirmation did not include a specific FC firmware/board combination or a detailed cycle-count and fault-injection record.
 
+## 2026-10-22 complete user-flow software audit
+
+The subsequent [passthrough and Chrome configurator audit](passthrough-audit.md) adds the browser manager, fragmented CLI and lost-final-ACK recovery checks, 20 Python tests, 11 JavaScript tests, browser UI integration and current passthrough build packages. It preserves the hardware acceptance boundaries below.
+
+Scope: initial USB installation/migration, wiring, Betaflight configuration, camera selection/pairing, BOOT/USER recording, status displays, maintenance, UART updates and recovery. Baseline: `c30200f`. The user explicitly confirmed that no test hardware was connected and requested software checks first. No device was opened, flashed, restarted or commanded to record. The [complete user guide](user-journey.md) provides success criteria, troubleshooting and the pending physical acceptance checklist.
+
+### Confirmed issues repaired
+
+| Issue / user impact | Repair and evidence |
+| --- | --- |
+| BOXIDS read only page zero: USER modes beyond the first 32 enabled modes could never control the camera | Read all 32-ID pages, reject incomplete/oversized maps, then map the full list to STATUS flags. Host regression covers USER at bit 40, exact full pages, 128-entry bound, missing page and duplicate/missing IDs. Page transport is build checked; actual UART timing remains a hardware check |
+| R SDK transient handshake/version/subscription errors became permanent pairing rejection | Preserve explicit rejection separately from transport failures, allowing the existing saved-target worker to retry. Actual handshake, adapter and controller worker are tested with substituted transport/RTOS; explicit rejection still waits for manual pairing |
+| BOOT long press bypassed the management recording/busy guard | Both paths now use the same busy check. Native receiver tests cover recording, saving, pending commands, connected unknown state, idle/offline pairing and paused resume |
+| C6 R SDK display could label invalid photo/unknown state as REC or standby | Gate LCD recording text on valid recording state and pending/busy flags. Actual dashboard text tested with substituted LVGL; physical pixels/fonts/layout are not simulated |
+| Manager camera selector retained the default rather than the connected device; passthrough checkbox carried into a different port/UART | Populate selection from status and reset passthrough on connection edits. Hidden Tk regression exercises the actual GUI and worker queue |
+| Manager pairing deadline was shorter than the combined DJI scan/GATT/approval bounds | Use a 120-second monotonic deadline; simulated 70-second pairing completes and closes its session. Actual radio timings remain unverified |
+| Manager could show standby during saving/pending work and a fictitious numeric GoPro pairing code | Display busy/pending status and restrict numeric codes to DJI; Python regression covers both |
+| Setup documents contained old version, automatic protocol detection and configurable pin claims | Correct version, runtime selection, fixed update-board wiring, paused LED/button behavior and maintenance recovery instructions; add the end-to-end guide |
+
+### Verification results
+
+- Betaflight suite: **11,965 checks passed**, including the new paginated mode reader. This is an assertion count, not 11,965 independent user scenarios.
+- GoPro protocol/status/advertisement/integration suite passed.
+- DJI actual R SDK callback/recording, connection handshake, Action 2 DUML and new controller-worker regressions passed.
+- Management NVS/OTA fault-injection suite passed, including the BOOT busy guard.
+- **17 Python manager tests** and **one hidden Tk GUI regression** passed. Serial/RTOS/BLE/NVS/OTA/LVGL substitutes do not prove physical behavior.
+- Both ESP-IDF **v5.5.5** boards built in new `build-audit-c3` / `build-audit-c6` directories from the tracked defaults, without the existing sdkconfig or object caches. Existing toolchain and downloaded C6 LVGL 8.3.11 were reused. Final source changes were included in subsequent build checks.
+- C3 app: **903,648 / 2,031,616 bytes**; C6 app: **1,290,688 / 4,128,768 bytes**. Both fit their dual-slot layouts with rollback enabled. These are image sizes, not runtime memory measurements.
+- Generated local `rotorrec-c3-1.2.0-dev-audit-update.zip` / `rotorrec-c6-1.2.0-dev-audit-update.zip` in their audit build directories; reloaded manifests, SHA-256, board/chip/version, ELF fingerprints and app bytes match the built images. USB flasher arguments include bootloader, partition table, OTA metadata and app; their file ranges do not overwrite the NVS region. No hardware write or physical rollback was tested.
+- Local documentation links and `git diff --check` passed. Changes and audit packages remain local; no GitHub push or release publication was performed.
+
+| Artifact | SHA-256 of application | ELF fingerprint |
+| --- | --- | --- |
+| C3 audit | `4f686b8cf4b9bfab7c0f7c96208aefcdee6b48813cb27ef15aa67e8d8c435693` | `5e8641d5a6a6610cf76451ff4b3abe74d34aff6ba67df58c82a499a74928c79c` |
+| C6 audit | `35f7a69e858ec183824ad8da48973dc7f237506db7ef8df833a1d4e38e02d35f` | `58aadc9235cdfb49d6d688a1817e8e252d689a9df7626e031d70ad9abc3fa622` |
+
+### Remaining acceptance boundaries
+
+The repaired paths require current-version hardware regression on both boards. In particular: actual USB migration and retained profiles, FC passthrough entry/exit, first pairing/approval, 20 record cycles and playable files, camera/ESP restarts, BLE/UART/RX loss, four-line OSD and physical LCD/LED output, saved settings/Link Pause, interrupted updates and early-boot rollback. GoPro model compatibility, runtime heap under load and stress timing remain unverified. Existing earlier UART/OSD and Action 2 evidence does not establish these new results. The initial DJI search retry, stale FC OSD text and unknown extra Action 2/GoPro telemetry limitations below remain intentional and are explained in the user guide.
+
 ## 2026-10-22 protocol integration verification
 
 The earlier Action 2 hardware results below remain valid historical evidence, reaffirmed by the project owner. This change preserves its known command payloads and status fields; the new receiver and controller behavior have not been flashed or hardware-regressed.

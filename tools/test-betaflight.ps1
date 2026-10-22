@@ -11,6 +11,9 @@ try {
     $bfCompile = 'call "{0}" >nul && cl /nologo /std:c11 /W4 /WX /D_CRT_SECURE_NO_WARNINGS /I"{1}\main" "{1}\tests\betaflight_test.c" "{1}\main\betaflight\msp_v2.c" "{1}\main\betaflight\bf_control.c" "{1}\main\betaflight\osd_messages.c" "{1}\main\management\settings.c" "{1}\main\ui\status_indicator.c" /Fe:betaflight_test.exe && betaflight_test.exe' -f $bfVars, $bfRoot
     & cmd.exe /d /s /c $bfCompile
     if ($LASTEXITCODE -ne 0) { throw "Betaflight tests failed: $LASTEXITCODE" }
+    $bfCompile = 'call "{0}" >nul && cl /nologo /std:c11 /W4 /WX /D_CRT_SECURE_NO_WARNINGS /I"{1}/main" /I"{1}/main/camera" /I"{1}/tests/ui" "{1}/tests/dashboard_test.c" /Fe:dashboard_test.exe && dashboard_test.exe' -f $bfVars, $bfRoot
+    & cmd.exe /d /s /c $bfCompile
+    if ($LASTEXITCODE -ne 0) { throw "LCD text tests failed: $LASTEXITCODE" }
 } finally {
     Pop-Location
 }

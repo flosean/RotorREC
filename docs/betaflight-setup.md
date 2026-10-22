@@ -23,7 +23,7 @@ Connect GND to GND. C3 GPIO18/19 are USB pins and must not use the C6 wiring. Se
 - For initial bench tests, power the ESP32 over USB. Do not connect battery voltage to GPIO or combine supplies without checking the power circuit.
 - Select an unused FC UART and enable standard bidirectional MSP at the same baud rate. Do not share a receiver, GPS, or video transmitter UART.
 - RotorREC writes Custom Messages to the FC; the existing video transmitter/goggles OSD path stays in place. The ESP32 is not a DisplayPort video device.
-- In `menuconfig` under `RotorREC serial bridge`, configure UART enablement, pins, baud rate, and the initial USER1-USER4 default (permanent IDs 40-43). The 1.2 manager can save a USER override without rebuilding. Board checks reject reserved LCD, USB, BOOT, and other protected pins.
+- The supported update images require the fixed board pins above and UART enabled at 115200; CMake rejects changes to these settings even if `menuconfig` exposes them. Set the initial USER1-USER4 default (permanent IDs 40-43) in `RotorREC serial bridge`, or save a USER override with the manager without rebuilding.
 
 ## Flight controller setup
 
@@ -48,7 +48,7 @@ Text updates when changed and is resent on reconnection. A five-second RAM refre
 ## Implementation and verification
 
 - Dedicated UART1 task with native MSPv2, CRC, fragmented receive handling, a 256-byte payload limit, noise recovery, and a 150 ms reply timeout. Status polling is approximately 10 Hz, slowed on errors; only one request is outstanding at a time.
-- `MSP_BOXIDS` refreshes every five seconds and maps permanent mode IDs to `MSP_STATUS` bits. Extended flags support more than 32 modes; bit 40 is not hard-coded. Missing or malformed mappings prevent control.
+- `MSP_BOXIDS` refreshes every five seconds, reading its 32-ID pages in order before mapping permanent IDs to `MSP_STATUS` bits. Extended flags support more than 32 modes; bit 40 is not hard-coded. Missing, incomplete, oversized or malformed mappings prevent control.
 - FAILSAFE mode and FAILSAFE, RX_FAILSAFE, and BOXFAILSAFE arming-disable flags block recording changes. Invalid replies and UART timeouts do not mean the switch is inactive.
 - Requests are limited to API_VERSION, FC_VARIANT, BOXIDS, STATUS, and SET_TEXT. No RC injection, ARM, motor, PID, FC settings, or EEPROM writes are sent.
 - Camera commands run outside the UART polling task and share gating with BOOT. Action 2 waits for a fresh 02/70 state after acknowledgement; unverified 02/80 fields cannot overwrite confirmed state.

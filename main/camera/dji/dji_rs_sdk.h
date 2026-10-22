@@ -8,6 +8,7 @@ typedef enum {
     DJI_RSDK_CONNECT_FAILED,
     DJI_RSDK_CONNECT_READY,
     DJI_RSDK_CONNECT_SUBSCRIBE_FAILED,
+    DJI_RSDK_CONNECT_REJECTED,
 } dji_rs_sdk_connect_result_t;
 
 void dji_rs_sdk_init(void);

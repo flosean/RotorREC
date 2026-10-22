@@ -26,7 +26,17 @@ Fixed supported wiring (3.3V UART, 115200, 8N1):
 
 Use common ground and an FC UART with MSP enabled at 115200. Some FCs do not supply this peripheral from USB; provide its normal regulated supply when needed. Bench operation only, with propellers removed.
 
-## Open the manager
+## Open the Chrome configurator
+
+The browser interface uses desktop Chrome/Edge Web Serial. Start a local static server from the repository root:
+
+```sh
+python -m http.server 8000 --bind 127.0.0.1 --directory tools/web-configurator
+```
+
+Open `http://127.0.0.1:8000`, select the FC serial port and the wired UART, then connect. A blank UART selects only a single eligible MSP UART. The browser handles the same camera selection, pairing, USER/OSD/LED/battery/Link Pause settings and update ZIPs as the Python manager. See the [browser guide](../tools/web-configurator/README.md) for reconnect, cancellation and test instructions. A hosted copy requires HTTPS. The ESP USB console is not this management port.
+
+## Open the Python manager
 
 Requires Python 3.10+ and pyserial 3.5. The GUI also requires tkinter (included in standard Windows Python).
 
@@ -38,7 +48,7 @@ python tools/rotorrec_manager.py gui
 1. Close Betaflight Configurator / serial monitors.
 2. Select the FC port and the UART wired to RotorREC. A blank UART field auto-selects only when exactly one hardware UART is configured for MSP. The tool never probes every attached peripheral.
 3. Use **Read status**, **Save camera & restart**, **Pair camera**, or **Update firmware**.
-4. After the first connection, the GUI checks “already in passthrough” automatically for subsequent operations. Uncheck it after power-cycling the FC.
+4. Read status to populate the actual camera selection and settings. After the first connection, the GUI checks “already in passthrough” automatically for subsequent operations. Changing port/UART clears that check; uncheck it manually after power-cycling the same FC.
 5. When finished, power-cycle the **FC** to leave passthrough and restore MSP/OSD/USER control. Restarting only the ESP cannot exit FC passthrough.
 
 If an operation loses its connection, an abandoned session expires in 30 seconds. Reconnect using the already-in-passthrough option, or power-cycle the FC for a fresh connection. A GUI window cannot close during an operation; **Cancel update** stops before committing the image. An in-flight packet may finish first.
@@ -63,7 +73,7 @@ python tools/rotorrec_manager.py --port COM7 --direct camera action2
 python tools/rotorrec_manager.py --port COM7 --direct pair
 ```
 
-`--direct` means the FC is already forwarding this UART; it does **not** mean connect to the ESP USB console. Pair polls actual status for up to 60 seconds and reports unconfirmed pairing as a failure, not success.
+`--direct` means the FC is already forwarding this UART; it does **not** mean connect to the ESP USB console. Pair polls actual status for up to 120 seconds, allowing DJI scan, GATT discovery and camera approval to finish. A missing response has its own transport timeout. Unconfirmed pairing is reported as a failure, not success; confirmed pairing alone does not establish that video recording is available.
 
 ## Update packages
 
@@ -78,7 +88,7 @@ For C6 use `build-passthrough-c6/rotorrec_esp32c6.bin`. Only matching RotorREC a
 
 The inactive slot receives 1024-byte chunks with incremental erase and stop-and-wait ACKs. The receiver rejects incorrect offsets, oversized/mismatched images and damaged frames. An exact retransmission returns the previous response without repeating a write, pairing or settings commit. After full SHA-256 and ESP-IDF image validation, it switches the boot slot. The tool then restarts the ESP and checks both version **and ELF fingerprint**, including same-version updates, before reporting completion.
 
-An interrupted transfer leaves the selected boot image unchanged. Restart the transfer from the beginning; there is no partial resume. If transfer completion was committed but its reply was lost, the device restarts into the validated image after the session timeout. Inspect status before assuming the update failed or succeeded.
+An interrupted transfer leaves the selected boot image unchanged. Restart the transfer from the beginning; there is no partial resume. If transfer completion was committed but its reply was lost, the device restarts into the validated image after the session timeout. Both managers wait using a new session and verify the resulting image instead of sending an ambiguous abort. If verification still fails, inspect status before assuming the update failed or succeeded.
 
 Two app slots and IDF rollback are enabled. On a new image's first startup, a 20-second restart timer guards initialization; after two seconds of main-loop operation, working NVS/UART service permits confirmation. Camera availability is not a health requirement. A crash/reset before confirmation returns to the previous working app. This does not guarantee recovery from every later application bug or bootloader/partition-table corruption. The initial USB-installed app has no previous valid image until a successful subsequent update exists.
 

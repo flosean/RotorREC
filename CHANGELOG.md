@@ -2,6 +2,15 @@
 
 ## 1.2.0-dev - Unreleased
 
+- Add a Chrome/Edge Web Serial configurator for Betaflight passthrough, camera selection/pairing, saved settings and validated local firmware ZIP updates.
+- Handle fragmented Betaflight CLI prompts and recover a lost final update acknowledgement by verifying the booted image; retain explicit failure when the result cannot be confirmed.
+
+- Read all Betaflight BOXIDS pages so USER modes beyond the first 32 entries can control recording.
+- Retry remembered R SDK sessions after transient handshake/version/subscription failures; keep explicit camera rejection separate and require manual retry after rejection.
+- Apply the camera-busy protection to BOOT re-pairing, and show unknown/pending/busy R SDK recording state correctly on the C6 LCD.
+- Populate the manager camera selector from device status, clear passthrough selection when changing connections, and allow up to 120 seconds for DJI pairing.
+- Add controller-worker, paginated-mode, LCD-text and manager regressions, plus a complete first-use and recovery guide. Hardware acceptance remains pending.
+
 - Preserve the verified Action 2 payloads while extracting DUML framing and adding bounded split/concatenated notification handling with captured-byte regression checks.
 - Correct R SDK remembered pairing and approval handling, gate recording by video mode/status, wait for actual-state confirmation and restore full sessions outside BLE callbacks after link loss.
 - Align GoPro API 2.0 validation and optional client-identification timeout behavior with the official SDK; retain strict shutter acknowledgement/status confirmation.

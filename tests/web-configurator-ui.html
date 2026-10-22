@@ -1,0 +1,119 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>RotorREC browser regression (simulated device)</title>
+<style>body{margin:12px;font:14px monospace}pre{white-space:pre-wrap}iframe{width:100%;height:800px;border:1px solid #aaa}</style>
+<pre id="results">Running actual configurator UI against simulated Web Serial. No hardware is accessed.</pre>
+<iframe title="Configurator under test"></iframe>
+<script type="module">
+// Serve the repository root, then visit /tests/web-configurator-ui.html.
+// Tests real app handlers and Web Serial streams; this does not simulate Flash/BLE hardware.
+import { CMD, Parser, encode, u32, crc32, imageMetadata, encodeSettings } from '../tools/web-configurator/protocol.mjs';
+const output = document.querySelector('#results');
+const report = message => { output.textContent += '\n' + message; };
+const check = (condition, message) => { if (!condition) throw Error(message); report('PASS ' + message); };
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function until(predicate) {
+  const end = performance.now() + 5000;
+  while (!predicate()) { if (performance.now() >= end) throw Error('UI wait timed out'); await sleep(10); }
+}
+const image = new Uint8Array(1536), imageView = new DataView(image.buffer), utf8 = new TextEncoder();
+image[0] = 0xe9; imageView.setUint16(12, 5, true); imageView.setUint32(32, 0xabcd5432, true);
+image.set(utf8.encode('1.2.0-ui-test'), 48); image.set(utf8.encode('rotorrec_esp32c3'), 80); image.fill(0x35, 176, 208);
+const metadata = await imageMetadata(image);
+// ZIP_STORED fixture, independently assembled to exercise the app's file-input path.
+function zipFile(entries) {
+  const local = [], central = []; let offset = 0, directoryLength = 0;
+  for (const [name, bytes] of entries) {
+    const filename = utf8.encode(name), header = new Uint8Array(30 + filename.length), h = new DataView(header.buffer);
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint32(14, crc32(bytes), true);
+    h.setUint32(18, bytes.length, true); h.setUint32(22, bytes.length, true); h.setUint16(26, filename.length, true); header.set(filename, 30);
+    const record = new Uint8Array(46 + filename.length), c = new DataView(record.buffer);
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint32(16, crc32(bytes), true);
+    c.setUint32(20, bytes.length, true); c.setUint32(24, bytes.length, true); c.setUint16(28, filename.length, true); c.setUint32(42, offset, true); record.set(filename, 46);
+    local.push(header, bytes); central.push(record); offset += header.length + bytes.length; directoryLength += record.length;
+  }
+  const end = new Uint8Array(22), e = new DataView(end.buffer); e.setUint32(0, 0x06054b50, true);
+  e.setUint16(8, entries.length, true); e.setUint16(10, entries.length, true); e.setUint32(12, directoryLength, true); e.setUint32(16, offset, true);
+  return new File([...local, ...central, end], 'simulated-update.zip', { type: 'application/zip' });
+}
+const file = zipFile([['manifest.json', utf8.encode(JSON.stringify(metadata))], ['app.bin', image]]);
+const state = { product: 'RotorREC', board: 'rotorrec_esp32c3', protocol: 1, layout: 1, capacity: 0x1f0000,
+  version: '1.1.0', elf_sha256: 'old', pending_verify: 0, camera: 2, phase: 7, command_pending: 0,
+  recording: 0, recording_valid: 1, saving: 0, battery: 75, battery_valid: 1, storage_error: 0,
+  settings_raw: 0x01000050, saved_settings_raw: 0x01000050 };
+const requests = [];
+let selectedCamera = 2, offset = 0, committed = false, cancelled = false, deviceSession = 0, deviceSequence = -1, cancelOnData = false;
+const port = {
+  async open() {
+    this.readable = new ReadableStream({ start: controller => { this.controller = controller; } });
+    this.writable = new WritableStream({ write: wire => {
+      const [packet] = new Parser().feed(wire); if (!packet) throw Error('Invalid host packet');
+      requests.push(packet.command);
+      if (packet.command === CMD.HELLO) { deviceSession = packet.session; deviceSequence = -1; }
+      if (packet.session !== deviceSession || packet.sequence !== deviceSequence + 1) throw Error('Wrong session or sequence');
+      deviceSequence = packet.sequence;
+      const data = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+      if (packet.command === CMD.CAMERA) selectedCamera = packet.payload[0];
+      if (packet.command === CMD.SETTINGS) state.saved_settings_raw = data.getUint32(0, true);
+      if (packet.command === CMD.BEGIN) { offset = 0; committed = false; cancelled = false; }
+      if (packet.command === CMD.DATA) {
+        if (data.getUint32(0, true) !== offset) throw Error('Wrong update offset'); offset += packet.payload.length - 4;
+        if (cancelOnData) { cancelOnData = false; document.querySelector('iframe').contentDocument.getElementById('cancel').click(); }
+      }
+      if (packet.command === CMD.END) { if (offset !== image.length) throw Error('Incomplete update'); committed = true; }
+      if (packet.command === CMD.ABORT) cancelled = true;
+      const json = [CMD.HELLO, CMD.INFO].includes(packet.command) ? utf8.encode(JSON.stringify(state)) : new Uint8Array();
+      const payload = new Uint8Array(4 + json.length); payload.set(json, 4);
+      this.controller.enqueue(encode(packet.command | 0x80, packet.session, packet.sequence, payload));
+      if (packet.command === CMD.REBOOT) {
+        state.camera = selectedCamera; state.settings_raw = state.saved_settings_raw; deviceSession = 0;
+        if (committed) { state.version = metadata.version; state.elf_sha256 = metadata.elf_sha256; }
+      }
+      if (packet.command === CMD.EXIT) deviceSession = 0;
+    } });
+  },
+  async setSignals() {}, async close() {},
+};
+try {
+  const frame = document.querySelector('iframe'), doc = frame.contentDocument;
+  const source = await (await fetch('../tools/web-configurator/index.html')).text();
+  doc.open(); doc.write(source.replace('<head>', '<head><base href="/tools/web-configurator/">')
+    .replace(/<script type="module" src="\.\/app.mjs"><\/script>/, '')); doc.close();
+  const win = frame.contentWindow;
+  Object.defineProperty(win.navigator, 'serial', { value: { requestPort: async () => port, addEventListener() {} }, configurable: true });
+  const script = doc.createElement('script'); script.type = 'module';
+  script.textContent = "import './app.mjs'; window.testLoaded = true;"; doc.body.append(script);
+  await until(() => win.testLoaded);
+  const $ = id => doc.getElementById(id);
+  async function click(id) { $(id).click(); await until(() => !$('connect').disabled || !$('disconnect').disabled); }
+  async function selectFile(value) {
+    const data = new DataTransfer(); data.items.add(value); $('package').files = data.files;
+    $('package').dispatchEvent(new win.Event('change')); await until(() => !$('package').disabled);
+  }
+  check($('flash').disabled && $('camera-controls').disabled, 'disconnected actions disabled');
+  $('direct').checked = true; await click('connect');
+  check(!$('disconnect').disabled && $('camera').value === '2', 'connect reads actual camera and status');
+  $('camera').value = '3'; await click('save-camera');
+  check(state.camera === 3 && $('result').textContent.includes('讀回確認'), 'camera saved and verified after reboot');
+  $('user').value = '42'; $('osd').value = '4'; $('led').value = '25'; $('low-battery').value = '20';
+  await click('save-settings');
+  check(state.settings_raw === encodeSettings({ user_mode_id: 42, osd_lines: 4, led_percent: 25, low_battery_percent: 20, link_paused: false, owns_extra_lines: true }), 'all basic settings reach the device');
+  await click('pair'); check($('result').textContent.includes('配對與連線已確認'), 'pairing waits for confirmed state');
+  await selectFile(new File(['invalid'], 'bad.zip'));
+  check(!$('disconnect').disabled && $('flash').disabled, 'invalid local package preserves device connection');
+  await selectFile(file); check(!$('flash').disabled && $('package-info').textContent.includes('SHA-256'), 'valid ZIP enables flash after validation');
+  await click('flash');
+  check(committed && offset === image.length && $('result').textContent.includes('指紋'), 'GUI update verifies reboot and fingerprint');
+  // Cancel after the first stop-and-wait request begins, before committing.
+  cancelOnData = true; await click('flash');
+  check(!committed && cancelled && $('result').textContent.includes('取消'), 'GUI cancellation aborts before END');
+  check(requests.at(-1) === CMD.EXIT, 'confirmed cancellation releases the management session for immediate reconnect');
+  $('direct').checked = true; await click('connect');
+  port.controller.error(new Error('simulated USB removal'));
+  await click('refresh'); check(!$('connect').disabled && $('flash').disabled, 'USB read failure unlocks reconnect and disables device actions');
+  $('direct').checked = true; await click('connect'); await click('disconnect');
+  check(requests.at(-1) === CMD.EXIT && !$('connect').disabled, 'disconnect sends EXIT and releases port');
+  report('ALL UI CHECKS PASSED (simulated hardware)');
+  document.title = 'PASS — RotorREC browser UI regression';
+} catch (error) { report('FAIL ' + error.stack); document.title = 'FAIL — RotorREC browser UI regression'; }
+</script>

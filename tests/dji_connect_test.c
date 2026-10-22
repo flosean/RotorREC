@@ -5,7 +5,7 @@
 
 test_ble_profile_t s_ble_profile;
 bool camera_status_initialized;
-static bool missing_ack, rejected, truncated;
+static bool missing_ack, rejected, truncated, ack_rejected, ack_truncated;
 static unsigned waits, replies, scans, disconnects;
 void receive_camera_notify_handler(const uint8_t *data, size_t length) { (void)data; (void)length; }
 void ble_set_notify_callback(void (*callback)(const uint8_t *, size_t)) { (void)callback; }
@@ -27,7 +27,9 @@ CommandResult send_command(uint8_t set, uint8_t id, uint8_t type,
     assert(set == 0 && id == 0x19);
     if (type == ACK_NO_RESPONSE) { ++replies; return (CommandResult){0}; }
     if (missing_ack) return (CommandResult){0};
-    return (CommandResult){calloc(1, sizeof(connection_request_response_frame)), sizeof(connection_request_response_frame)};
+    connection_request_response_frame *reply = calloc(1, sizeof(*reply));
+    reply->ret_code = ack_rejected ? 1 : 0;
+    return (CommandResult){reply, ack_truncated ? 1 : sizeof(*reply)};
 }
 int data_wait_for_result_by_cmd(uint8_t set, uint8_t id, int timeout,
     uint16_t *seq, void **result, size_t *length)
@@ -42,14 +44,16 @@ int data_wait_for_result_by_cmd(uint8_t set, uint8_t id, int timeout,
 int main(void)
 {
     int8_t mac[6] = {0};
-    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+    for (unsigned scenario = 0; scenario < 6; ++scenario) {
         missing_ack = scenario == 1; rejected = scenario == 2; truncated = scenario == 3;
+        ack_rejected = scenario == 4; ack_truncated = scenario == 5;
         waits = replies = disconnects = 0; connect_state = BLE_CONNECTED;
         s_ble_profile.connection_status.is_connected = true;
         int result = connect_logic_protocol_connect(1, sizeof(mac), mac, 0, 1, 1234, 0);
-        assert(waits == 1); /* Includes approval arriving without a request ACK. */
+        assert(waits == (scenario < 4 ? 1U : 0U)); /* Approval without a request ACK is consumed once. */
         if (scenario < 2) assert(result == 0 && replies == 1 && connect_state == PROTOCOL_CONNECTED);
-        else assert(result == -1 && replies == 0 && disconnects == 1);
+        else assert(result == ((rejected || ack_rejected) ? CONNECT_PROTOCOL_REJECTED : -1) &&
+                    replies == 0 && disconnects == 1);
     }
     camera_status_initialized = true; connect_state = PROTOCOL_CONNECTED;
     receive_camera_disconnect_handler();

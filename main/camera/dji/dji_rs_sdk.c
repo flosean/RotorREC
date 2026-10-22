@@ -153,9 +153,10 @@ dji_rs_sdk_connect_result_t dji_rs_sdk_connect(uint16_t pairing_code, bool remem
 
     ESP_ERROR_CHECK(esp_read_mac(bluetooth_mac, ESP_MAC_BT));
     memcpy(controller_mac, bluetooth_mac, sizeof(controller_mac));
-    if (connect_logic_protocol_connect(0x12345678, sizeof(controller_mac), controller_mac,
-                                       0, remembered ? 0 : 1, pairing_code, 0) != 0) {
-        return DJI_RSDK_CONNECT_FAILED;
+    int connected = connect_logic_protocol_connect(0x12345678, sizeof(controller_mac), controller_mac,
+                                                   0, remembered ? 0 : 1, pairing_code, 0);
+    if (connected != 0) {
+        return connected == CONNECT_PROTOCOL_REJECTED ? DJI_RSDK_CONNECT_REJECTED : DJI_RSDK_CONNECT_FAILED;
     }
 
     version_query_response_frame_t *version = command_logic_get_version();

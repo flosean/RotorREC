@@ -29,6 +29,23 @@ bool bf_mode_map_parse(bf_mode_map_t *map, uint8_t permanent_id,
     return map->mode_bit >= 0 && map->failsafe_bit >= 0;
 }
 
+bool bf_mode_map_read(bf_mode_map_t *map, uint8_t permanent_id,
+                     bool (*read_page)(uint8_t page, uint8_t ids[32], size_t *length))
+{
+    uint8_t ids[128], chunk[32];
+    size_t used = 0;
+    *map = (bf_mode_map_t){.mode_bit = -1, .failsafe_bit = -1};
+    for (uint8_t page = 0; page <= 4; ++page) {
+        size_t length = 0;
+        if (!read_page(page, chunk, &length) || length > sizeof(chunk) ||
+            length > sizeof(ids) - used) return false;
+        memcpy(ids + used, chunk, length);
+        used += length;
+        if (length < sizeof(chunk)) return bf_mode_map_parse(map, permanent_id, ids, used);
+    }
+    return false;
+}
+
 static bool mode_flag(const uint8_t *payload, size_t extra_bytes, int bit, bool *value)
 {
     if (bit < 0 || (size_t)bit >= 32 + extra_bytes * 8) return false;

@@ -5,7 +5,7 @@ The headless RotorREC board uses the Waveshare ESP32-C3-Zero (C3FH4, 4 MB flash)
 ## Controls
 
 - Short-press BOOT (GPIO9): toggle recording when ready.
-- Hold BOOT for 1.2 seconds: scan and pair again.
+- Hold BOOT for 1.2 seconds: scan and pair again when idle/offline, or resume Link Pause. Recording, saving, pending commands and connected unknown state block fresh pairing.
 - RESET: restart the module.
 - USB logs: connection status, battery level, and R SDK pairing code.
 - GPIO10 RGB: indication based on actual camera status.
@@ -17,6 +17,7 @@ The headless RotorREC board uses the Waveshare ESP32-C3-Zero (C3FH4, 4 MB flash)
 | Slow red blink | Disconnected, scan failed, or pairing rejected |
 | Fast red blink | Scanning, pairing, or reconnecting |
 | Fast yellow blink | Waiting for valid status, command confirmation, or camera storage |
+| Steady blue | Link Pause; hold BOOT for 1.2 seconds to resume |
 
 Slow blinking is 1 second on and 1 second off; fast blinking is 0.2 seconds on and 0.2 seconds off. This board uses RGB byte order. Visual verification of the color correction remains open; other WS2812 boards may use a different order.
 
@@ -50,7 +51,7 @@ Other systems can use the idf.py commands in [building and flashing](build-and-f
 
 1. Connect USB and confirm the log identifies the C3 board and UART TX0/RX1.
 2. Turn off other camera remotes and turn on the camera near the module.
-3. Initial discovery tries the public R SDK before the Action 2 path. Accept any confirmation shown on the camera. Hold BOOT to retry a failed scan.
+3. Only the saved protocol is used; a fresh installation defaults to Action 2. Select `dji-rsdk` or `gopro` in the [manager](passthrough.md) for other cameras. Accept any confirmation shown on the camera. Hold BOOT to retry a failed scan.
 4. Check the Bluetooth icon, actual recording control, and battery level. Then test independent restarts and out-of-range recovery.
 5. Remove propellers before connecting the flight controller and follow [Betaflight setup](betaflight-setup.md).
 
