@@ -13,10 +13,22 @@ static unsigned attempts, sleeps;
 static bool maintenance, manual_pair;
 static jmp_buf worker_done;
 static TickType_t tick;
+static camera_controller_state_t gopro_state;
+static bool saved_pending, last_target;
+static uint8_t saved_remaining;
+static unsigned record_calls;
+static esp_err_t save_error, record_error;
 camera_protocol_t management_camera(void) { return CAMERA_PROTOCOL_DJI_RSDK; }
 const rr_settings_t *management_settings(void) { return &settings; }
 bool management_active(void) { return maintenance; }
+esp_err_t management_stop_save(bool pending, uint8_t remaining) {
+    if (save_error) return save_error;
+    saved_pending = pending; saved_remaining = remaining; return ESP_OK;
+}
+esp_err_t management_stop_load(bool *pending, uint8_t *remaining) { *pending = saved_pending; *remaining = saved_remaining; return ESP_OK; }
+bool management_stop_healthy(void) { return !save_error; }
 TickType_t xTaskGetTickCount(void) { return tick; }
+int64_t esp_timer_get_time(void) { return (int64_t)tick * 1000; }
 void vTaskDelay(TickType_t ticks) {
     tick += ticks;
     if (ticks == 1000) {
@@ -78,9 +90,9 @@ bool dji_action2_is_ready(void) { return false; }
 void dji_action2_get_state(dji_action2_state_t *state) { *state = (dji_action2_state_t){0}; }
 esp_err_t gopro_init(void) { return ESP_OK; }
 void gopro_start(void) {}
-esp_err_t gopro_request_recording(bool recording) { (void)recording; return ESP_OK; }
+esp_err_t gopro_request_recording(bool recording) { ++record_calls; last_target = recording; return record_error; }
 void gopro_request_pairing(void) {}
-void gopro_get_state(camera_controller_state_t *state) { *state = (camera_controller_state_t){0}; }
+void gopro_get_state(camera_controller_state_t *state) { *state = gopro_state; }
 
 static void run_worker(dji_rs_sdk_connect_result_t failure, bool active) {
     s_selected = CAMERA_PROTOCOL_DJI_RSDK; s_rs_saved = true;
@@ -102,6 +114,30 @@ int main(void) {
     assert(attempts == 2 && s_phase == CAMERA_PHASE_READY);
     run_worker(DJI_RSDK_CONNECT_FAILED, true);
     assert(attempts == 1); /* Maintenance inhibits background R SDK reconnect. */
+    maintenance = false; s_selected = CAMERA_PROTOCOL_GOPRO;
+    gopro_state = (camera_controller_state_t){.protocol = CAMERA_PROTOCOL_GOPRO,
+        .phase = CAMERA_PHASE_READY, .recording_valid = true, .link_connected = true};
+    saved_pending = true; saved_remaining = 5; save_error = ESP_FAIL;
+    assert(camera_controller_request_recording(true) == ESP_FAIL && record_calls == 0);
+    assert(saved_pending && saved_remaining == 5); /* START cannot resurrect an old STOP after reboot. */
+    gopro_state.recording = true;
+    assert(camera_controller_request_recording(false) == ESP_OK && record_calls == 1 && !last_target);
+    camera_controller_state_t state; camera_controller_get_state(&state);
+    assert(state.stop_persistence_error); /* Storage failure must not prevent a real STOP attempt. */
+    save_error = 0; record_error = ESP_FAIL;
+    assert(camera_controller_request_recording(true) == ESP_FAIL && saved_pending && saved_remaining == 5);
+    record_error = 0;
+    uint32_t old_sequence = s_manual_sequence;
+    assert(camera_controller_request_recording(true) == ESP_OK && !saved_pending);
+    assert(s_manual_sequence == old_sequence + 1);
+    assert(camera_controller_persist_stop(true, 5, old_sequence) == ESP_ERR_INVALID_STATE && !saved_pending);
+    camera_controller_stop_countdown(5, old_sequence); assert(s_stop_countdown == 0);
+    camera_controller_stop_countdown(5, s_manual_sequence); assert(s_stop_countdown == 5);
+    camera_controller_stop_countdown(0, 0); assert(s_stop_countdown == 0);
+    unsigned previous_calls = record_calls;
+    assert(camera_controller_automate_recording(false, old_sequence) == ESP_ERR_INVALID_STATE && record_calls == previous_calls);
+    gopro_state.recording_valid = false;
+    assert(camera_controller_request_recording(false) == ESP_ERR_INVALID_STATE && record_calls == previous_calls);
     puts("Camera controller transient reconnect, subscription failure, rejection and manual recovery passed.");
     return 0;
 }

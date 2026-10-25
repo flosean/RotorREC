@@ -20,6 +20,16 @@ int main(void)
     state.snapshot.record_time_valid = true; state.snapshot.record_time = 12;
     dashboard_refresh(&state);
     assert(!strcmp(s_record_label->text, "REC  00:12"));
+    state.protocol = CAMERA_PROTOCOL_DJI_ACTION2; state.snapshot.record_time_estimated = true;
+    dashboard_refresh(&state);
+    assert(!strcmp(s_record_label->text, "REC  ~00:12"));
+    state.warnings = CAMERA_WARN_SD_FULL;
+    dashboard_refresh(&state);
+    assert(!strcmp(s_record_label->text, "!SD FULL"));
+    state.record_result = CAMERA_RECORD_STOP_FAILED;
+    dashboard_refresh(&state);
+    assert(!strcmp(s_record_label->text, "!NOT STOPPED"));
+    state.protocol = CAMERA_PROTOCOL_DJI_RSDK; state.warnings = 0; state.record_result = CAMERA_RECORD_OK;
     state.recording = false;
     dashboard_refresh(&state);
     assert(strstr(s_record_label->text, "STANDBY"));

@@ -4,3 +4,4 @@
 
 void dashboard_init(void);
 void dashboard_refresh(const camera_controller_state_t *state);
+void dashboard_wifi(const char *ssid, const char *password);

@@ -7,7 +7,7 @@
 <script type="module">
 // Serve the repository root, then visit /tests/web-configurator-ui.html.
 // Tests real app handlers and Web Serial streams; this does not simulate Flash/BLE hardware.
-import { CMD, Parser, encode, u32, crc32, imageMetadata, encodeSettings } from '../tools/web-configurator/protocol.mjs';
+import { CMD, Parser, encode, u32, crc32, imageMetadata, encodeSettings, decodeControl, encodeLayout, decodeLayout } from '../tools/web-configurator/protocol.mjs';
 const output = document.querySelector('#results');
 const report = message => { output.textContent += '\n' + message; };
 const check = (condition, message) => { if (!condition) throw Error(message); report('PASS ' + message); };
@@ -37,10 +37,12 @@ function zipFile(entries) {
   return new File([...local, ...central, end], 'simulated-update.zip', { type: 'application/zip' });
 }
 const file = zipFile([['manifest.json', utf8.encode(JSON.stringify(metadata))], ['app.bin', image]]);
+const wifiTest = new URLSearchParams(location.search).get('transport') === 'wifi';
 const state = { product: 'RotorREC', board: 'rotorrec_esp32c3', protocol: 1, layout: 1, capacity: 0x1f0000,
+  reset_capable: 1, reset_pending: 0, wifi_capable: 1, wifi_active: Number(wifiTest),
   version: '1.1.0', elf_sha256: 'old', pending_verify: 0, camera: 2, phase: 7, command_pending: 0,
   recording: 0, recording_valid: 1, saving: 0, battery: 75, battery_valid: 1, storage_error: 0,
-  settings_raw: 0x01000050, saved_settings_raw: 0x01000050 };
+  settings_raw: 0x01000050, saved_settings_raw: 0x01000050, control_raw: 0x01400328, saved_control_raw: 0x01400328 };
 const requests = [];
 let selectedCamera = 2, offset = 0, committed = false, cancelled = false, deviceSession = 0, deviceSequence = -1, cancelOnData = false;
 const port = {
@@ -54,7 +56,12 @@ const port = {
       deviceSequence = packet.sequence;
       const data = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
       if (packet.command === CMD.CAMERA) selectedCamera = packet.payload[0];
-      if (packet.command === CMD.SETTINGS) state.saved_settings_raw = data.getUint32(0, true);
+      if (packet.command === CMD.SETTINGS) {
+        state.saved_settings_raw = data.getUint32(0, true);
+        if (packet.payload.length === 8) state.saved_control_raw = data.getUint32(4, true);
+      }
+      if (packet.command === CMD.SET_OSD_LAYOUT) state.saved_osd_layout = decodeLayout(packet.payload);
+      if (packet.command === CMD.RESET) state.reset_pending = packet.payload[0];
       if (packet.command === CMD.BEGIN) { offset = 0; committed = false; cancelled = false; }
       if (packet.command === CMD.DATA) {
         if (data.getUint32(0, true) !== offset) throw Error('Wrong update offset'); offset += packet.payload.length - 4;
@@ -62,11 +69,26 @@ const port = {
       }
       if (packet.command === CMD.END) { if (offset !== image.length) throw Error('Incomplete update'); committed = true; }
       if (packet.command === CMD.ABORT) cancelled = true;
-      const json = [CMD.HELLO, CMD.INFO].includes(packet.command) ? utf8.encode(JSON.stringify(state)) : new Uint8Array();
+      const layouts = new Uint8Array(514);
+      layouts.set(encodeLayout(state.osd_layout ?? ['', '', '', '']));
+      layouts.set(encodeLayout(state.saved_osd_layout ?? ['', '', '', '']), 257);
+      const json = [CMD.HELLO, CMD.INFO].includes(packet.command) ? utf8.encode(JSON.stringify({...state, telemetry_version: 1, osd_layout_version: 1})) :
+        packet.command === CMD.OSD_LAYOUT ? layouts :
+        packet.command === CMD.TELEMETRY ? utf8.encode(JSON.stringify({record_time: 70, record_time_estimated: 1,
+          remain_time: null, remain_capacity: 0, parameters: '4K 60', warnings: 3})) : new Uint8Array();
       const payload = new Uint8Array(4 + json.length); payload.set(json, 4);
       this.controller.enqueue(encode(packet.command | 0x80, packet.session, packet.sequence, payload));
       if (packet.command === CMD.REBOOT) {
-        state.camera = selectedCamera; state.settings_raw = state.saved_settings_raw; deviceSession = 0;
+        state.camera = selectedCamera; state.settings_raw = state.saved_settings_raw;
+        state.control_raw = state.saved_control_raw; deviceSession = 0;
+        state.osd_layout = state.saved_osd_layout;
+        if (state.reset_pending === 1) state.settings_raw = state.saved_settings_raw |= 8;
+        if (state.reset_pending === 2) {
+          state.settings_raw = state.saved_settings_raw = 0x01000050;
+          state.control_raw = state.saved_control_raw = 0x01400328;
+          state.osd_layout = state.saved_osd_layout = ['', '', '', ''];
+        }
+        state.reset_pending = 0;
         if (committed) { state.version = metadata.version; state.elf_sha256 = metadata.elf_sha256; }
       }
       if (packet.command === CMD.EXIT) deviceSession = 0;
@@ -78,8 +100,19 @@ try {
   const frame = document.querySelector('iframe'), doc = frame.contentDocument;
   const source = await (await fetch('../tools/web-configurator/index.html')).text();
   doc.open(); doc.write(source.replace('<head>', '<head><base href="/tools/web-configurator/">')
-    .replace(/<script type="module" src="\.\/app.mjs"><\/script>/, '')); doc.close();
+    .replace(/<script type="module" src="(?:\.\/)?app.mjs"><\/script>/, '')); doc.close();
   const win = frame.contentWindow;
+  if (wifiTest) {
+    frame.style.width = '390px';
+    win.history.replaceState({}, '', '/tools/web-configurator/?transport=wifi');
+    await port.open(); const writer = port.writable.getWriter(), reader = port.readable.getReader();
+    win.fetch = async (url, options) => {
+      if (url === '/session') return Response.json({token: 'a'.repeat(32)});
+      if (url !== '/api') throw Error('Unexpected HTTP endpoint');
+      await writer.write(options.body);
+      return new Response((await reader.read()).value);
+    };
+  }
   Object.defineProperty(win.navigator, 'serial', { value: { requestPort: async () => port, addEventListener() {} }, configurable: true });
   const script = doc.createElement('script'); script.type = 'module';
   script.textContent = "import './app.mjs'; window.testLoaded = true;"; doc.body.append(script);
@@ -93,12 +126,29 @@ try {
   check($('flash').disabled && $('camera-controls').disabled, 'disconnected actions disabled');
   $('direct').checked = true; await click('connect');
   check(!$('disconnect').disabled && $('camera').value === '2', 'connect reads actual camera and status');
+  check($('camera-telemetry').textContent.includes('約 1:10') && $('camera-telemetry').textContent.includes('剩餘 未知') &&
+    $('camera-warnings').textContent.includes('沒有 SD 卡；SD 卡已滿'), 'fresh telemetry, estimates, unknown fields and concurrent warnings displayed');
   $('camera').value = '3'; await click('save-camera');
   check(state.camera === 3 && $('result').textContent.includes('讀回確認'), 'camera saved and verified after reboot');
   $('user').value = '42'; $('osd').value = '4'; $('led').value = '25'; $('low-battery').value = '20';
+  $('record-mode').value = '3'; $('stop-delay').value = '12'; $('auto-stop').checked = false;
   await click('save-settings');
   check(state.settings_raw === encodeSettings({ user_mode_id: 42, osd_lines: 4, led_percent: 25, low_battery_percent: 20, link_paused: false, owns_extra_lines: true }), 'all basic settings reach the device');
-  await click('pair'); check($('result').textContent.includes('配對與連線已確認'), 'pairing waits for confirmed state');
+  check(decodeControl(state.control_raw).record_mode === 3 && decodeControl(state.control_raw).stop_delay_seconds === 12 &&
+    !decodeControl(state.control_raw).auto_stop, 'recording mode, delay and automation saved and verified');
+  state.record_result = 4; await click('refresh');
+  check($('device-status').textContent.includes('尚未停止錄影'), 'failed STOP remains explicit in the real GUI');
+  state.record_result = 0;
+  $('layout-0').value = '{state}'; $('layout-1').value = '{battery} {remaining}';
+  $('layout-2').value = 'CAM {format}'; $('layout-3').value = '{space}';
+  await click('save-layout');
+  check(state.osd_layout[2] === 'CAM {format}' && $('result').textContent.includes('讀回確認'), 'OSD templates save and verify after restart');
+  if (wifiTest) check($('pair').disabled && $('uart').disabled, 'Wi-Fi disables BLE pairing and serial controls');
+  else { await click('pair'); check($('result').textContent.includes('配對與連線已確認'), 'pairing waits for confirmed state'); }
+  check($('reset-device').disabled, 'reset requires explicit deletion confirmation');
+  $('reset-confirm').checked = true; $('reset-confirm').dispatchEvent(new win.Event('change'));
+  await click('reset-device');
+  check(state.reset_pending === 0 && (state.settings_raw & 8) && $('result').textContent.includes('清除配對與重啟已確認'), 'pairing removal verifies reboot and Link Pause');
   await selectFile(new File(['invalid'], 'bad.zip'));
   check(!$('disconnect').disabled && $('flash').disabled, 'invalid local package preserves device connection');
   await selectFile(file); check(!$('flash').disabled && $('package-info').textContent.includes('SHA-256'), 'valid ZIP enables flash after validation');
@@ -109,9 +159,18 @@ try {
   check(!committed && cancelled && $('result').textContent.includes('取消'), 'GUI cancellation aborts before END');
   check(requests.at(-1) === CMD.EXIT, 'confirmed cancellation releases the management session for immediate reconnect');
   $('direct').checked = true; await click('connect');
-  port.controller.error(new Error('simulated USB removal'));
-  await click('refresh'); check(!$('connect').disabled && $('flash').disabled, 'USB read failure unlocks reconnect and disables device actions');
-  $('direct').checked = true; await click('connect'); await click('disconnect');
+  if (!wifiTest) {
+    port.controller.error(new Error('simulated USB removal'));
+    await click('refresh'); check(!$('connect').disabled && $('flash').disabled, 'USB read failure unlocks reconnect and disables device actions');
+    $('direct').checked = true; await click('connect');
+  } else {
+    $('reset-scope').value = '2'; $('reset-scope').dispatchEvent(new win.Event('change'));
+    $('reset-confirm').checked = true; $('reset-confirm').dispatchEvent(new win.Event('change'));
+    await click('reset-device');
+    check(!$('connect').disabled && $('result').textContent.includes('無法確認完成'), 'Wi-Fi factory reset never claims verified success');
+    await click('connect');
+  }
+  await click('disconnect');
   check(requests.at(-1) === CMD.EXIT && !$('connect').disabled, 'disconnect sends EXIT and releases port');
   report('ALL UI CHECKS PASSED (simulated hardware)');
   document.title = 'PASS — RotorREC browser UI regression';

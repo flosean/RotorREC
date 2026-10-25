@@ -94,6 +94,30 @@ class UpdatePort:
 
 
 class Checks(unittest.TestCase):
+    def test_osd_layout_validation_and_readback(self):
+        rows = ["{state}", "{battery} {remaining}", "TEST {format}", ""]
+        self.assertEqual(m.decode_layout(m.encode_layout(rows)), rows)
+        for row in ("{typo}", "{state", "}", "中文字", "X" * 64, "{mode}" * 9):
+            with self.assertRaises(ValueError): m.encode_layout([row, "", "", ""])
+        client = m.Client(types.SimpleNamespace())
+        with patch.object(client, "info", side_effect=[{"osd_layout_version": 1}, {"saved_osd_layout": rows}]), \
+             patch.object(client, "request") as request, patch.object(client, "reboot", return_value={"osd_layout": rows}):
+            self.assertEqual(client.set_layout(rows)["osd_layout"], rows)
+            self.assertEqual(request.call_args.args, (m.SET_OSD_LAYOUT, m.encode_layout(rows)))
+
+    def test_telemetry_reply_and_warning_text(self):
+        client = m.Client(types.SimpleNamespace())
+        with patch.object(client, "request", side_effect=[json.dumps({"product": "RotorREC", "protocol": 1,
+                "telemetry_version": 1}), json.dumps({"record_time": 70000, "record_time_estimated": 1,
+                "remain_time": None, "remain_capacity": 0, "warnings": 9})]) as request:
+            value = client.info(hello=True)
+        self.assertEqual([c.args[0] for c in request.call_args_list], [m.HELLO, m.TELEMETRY])
+        text = m.describe_status(value)
+        self.assertIn("REC ~1166:40", text)
+        self.assertIn("Remaining Unknown", text)
+        self.assertIn("SD 0 MB", text)
+        self.assertIn("No SD card; SD write speed error", text)
+
     def test_cli_fragmented_comment_is_not_a_prompt(self):
         for split in (b"#", b"# ", b"version\r\n#", b"version\r\n# "):
             with self.subTest(split=split):
@@ -233,6 +257,26 @@ class Checks(unittest.TestCase):
         self.assertNotIn("Standby", m.describe_status(value))
         self.assertIn("Waiting for camera command", m.describe_status(value | dict(command_pending=1)))
 
+    def test_extended_control_settings(self):
+        control = dict(record_mode=0, stop_delay_seconds=5, auto_record=True, auto_stop=True,
+                       low_remaining_seconds=0, heads_up_warnings=True)
+        self.assertEqual(m.encode_control(control), 0x01400328)
+        self.assertEqual(m.decode_control(0x01400328), control)
+        for raw in (0, -1, True, 0x02000000, 0x01800000, 0x010000f8, 0x01000007):
+            with self.assertRaises(ValueError):
+                m.decode_control(raw)
+        client = m.Client(FakePort())
+        client.info = lambda: dict(settings_raw=0x01000050, control_raw=m.encode_control(control))
+        client.reboot = lambda **expected: expected
+        result = client.set_settings(record_mode=3, stop_delay_seconds=30, auto_stop=False)
+        payload = m.Parser().feed(client.port.requests[0])[0][3]
+        self.assertEqual(struct.unpack('<II', payload), (result['settings_raw'], result['control_raw']))
+        self.assertEqual(m.decode_control(result['control_raw']), control | dict(record_mode=3, stop_delay_seconds=30, auto_stop=False))
+        self.assertIn('not stopped recording', m.describe_status(dict(record_result=4)))
+        client.info = lambda: dict(settings_raw=0x01000050)
+        with self.assertRaises(ValueError):
+            client.set_settings(record_mode=1)
+
     def test_packets(self):
         wire = m.encode(m.DATA, 0x12345678, 19, bytes(range(256)) * 4)
         for split in range(len(wire) + 1):
@@ -351,6 +395,41 @@ class Checks(unittest.TestCase):
             m.enter_passthrough(port, 2, log=lambda _: None)
         self.assertFalse(any(cmd.startswith(b"serialpassthrough") for cmd in port.commands))
 
+
+class ResetAndRebootTests(unittest.TestCase):
+    def test_extended_settings_actual_reboot_readback(self):
+        client = m.Client(None)
+        state = dict(product="RotorREC", protocol=1, settings_raw=0x01000050, control_raw=0x01400328)
+        commands = []
+        def request(command, payload=b"", **options):
+            commands.append(command)
+            if command == m.SET_SETTINGS:
+                state["settings_raw"], state["control_raw"] = m.struct.unpack("<II", payload)
+            return b""
+        with patch.object(client, "info", side_effect=lambda **kw: dict(state)), patch.object(client, "request", side_effect=request):
+            result = client.set_settings(record_mode=3, stop_delay_seconds=30)
+            self.assertEqual(m.decode_control(result["control_raw"])["record_mode"], 3)
+            self.assertIn(m.REBOOT, commands)
+            with self.assertRaisesRegex(RuntimeError, "Recording settings"):
+                client.reboot(control_raw=0x01400328)
+
+    def test_reset_persisted_then_rebooted_and_old_firmware_rejected(self):
+        client = m.Client(None)
+        state = dict(reset_capable=1, reset_pending=0, storage_error=0, settings_raw=0x01000058)
+        calls = []
+        def request(command, payload=b"", **options):
+            calls.append(command)
+            if command == m.RESET: state["reset_pending"] = payload[0]
+            elif command == m.REBOOT: state["reset_pending"] = 0
+            return b""
+        with patch.object(client, "info", side_effect=lambda **kw: dict(state)), patch.object(client, "request", side_effect=request):
+            self.assertEqual(client.reset_device(1)["reset_pending"], 0)
+            self.assertEqual(calls, [m.RESET, m.REBOOT])
+            with self.assertRaises(ValueError): client.reset_device(True)
+            state["reset_capable"] = 0
+            with self.assertRaisesRegex(ValueError, "Update firmware"): client.reset_device(2)
+            state.update(reset_capable=1, wifi_active=1)
+            with self.assertRaisesRegex(ValueError, "Wi-Fi web"): client.reset_device(2)
 
 if __name__ == "__main__":
     unittest.main()

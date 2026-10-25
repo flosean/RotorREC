@@ -8,6 +8,7 @@
 
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,6 +19,16 @@
 #include "dji/dji_rs_sdk.h"
 #endif
 #include <stdatomic.h>
+#include "recording_feedback.h"
+#include "camera_telemetry.h"
+static recording_feedback_t s_record_feedback;
+static camera_telemetry_t s_telemetry;
+static uint32_t s_feedback_generation;
+static uint32_t s_manual_sequence;
+static bool s_manual_target;
+static uint8_t s_stop_countdown;
+static atomic_flag s_request_lock = ATOMIC_FLAG_INIT;
+static portMUX_TYPE s_feedback_mux = portMUX_INITIALIZER_UNLOCKED;
 static atomic_bool s_initialized;
 static atomic_bool s_pair_queued;
 static camera_protocol_t s_selected;
@@ -72,7 +83,7 @@ static void set_recording_task(void *argument)
     vTaskDelete(NULL);
 }
 
-esp_err_t camera_controller_request_recording(bool recording)
+static esp_err_t request_recording(bool recording)
 {
     if (!s_initialized || management_active()) return ESP_ERR_INVALID_STATE;
     if (s_selected == CAMERA_PROTOCOL_GOPRO) return gopro_request_recording(recording);
@@ -86,6 +97,59 @@ esp_err_t camera_controller_request_recording(bool recording)
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+static esp_err_t recording_request(bool recording, bool manual, uint32_t sequence)
+{
+    if (atomic_flag_test_and_set(&s_request_lock)) return ESP_ERR_INVALID_STATE;
+    if (!manual && sequence != s_manual_sequence) {
+        atomic_flag_clear(&s_request_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    camera_controller_state_t before;
+    camera_controller_get_state(&before);
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (s_initialized && !management_active() && before.phase == CAMERA_PHASE_READY &&
+        before.recording_valid && !before.saving && !before.command_pending) {
+        bool old_pending = false;
+        uint8_t old_remaining = 0;
+        esp_err_t loaded = management_stop_load(&old_pending, &old_remaining);
+        /* Replace durable intent before START so a reset cannot resurrect an old
+         * STOP against a new clip. A failed save must never block an actual STOP. */
+        esp_err_t saved = management_stop_save(!recording, 0);
+        result = recording && saved != ESP_OK ? saved : request_recording(recording);
+        if (result != ESP_OK && loaded == ESP_OK) (void)management_stop_save(old_pending, old_remaining);
+    }
+    portENTER_CRITICAL(&s_feedback_mux);
+    recording_feedback_request(&s_record_feedback, (uint32_t)(esp_timer_get_time() / 1000),
+                               recording, result == ESP_OK);
+    ++s_feedback_generation;
+    if (manual && result == ESP_OK) {
+        ++s_manual_sequence;
+        s_manual_target = recording;
+        s_stop_countdown = 0;
+    }
+    portEXIT_CRITICAL(&s_feedback_mux);
+    atomic_flag_clear(&s_request_lock);
+    return result;
+}
+
+esp_err_t camera_controller_request_recording(bool recording) { return recording_request(recording, true, 0); }
+esp_err_t camera_controller_automate_recording(bool recording, uint32_t sequence)
+{ return recording_request(recording, false, sequence); }
+esp_err_t camera_controller_persist_stop(bool pending, uint8_t remaining, uint32_t sequence)
+{
+    if (atomic_flag_test_and_set(&s_request_lock)) return ESP_ERR_INVALID_STATE;
+    /* An old bridge snapshot must not restore STOP after a newer manual START. */
+    esp_err_t result = sequence == s_manual_sequence ? management_stop_save(pending, remaining) : ESP_ERR_INVALID_STATE;
+    atomic_flag_clear(&s_request_lock);
+    return result;
+}
+void camera_controller_stop_countdown(uint8_t seconds, uint32_t sequence)
+{
+    portENTER_CRITICAL(&s_feedback_mux);
+    if (!seconds || sequence == s_manual_sequence) s_stop_countdown = seconds;
+    portEXIT_CRITICAL(&s_feedback_mux);
 }
 
 static void pair_camera_task(void *argument);
@@ -335,7 +399,7 @@ void camera_controller_short_press(void)
     if (s_selected == CAMERA_PROTOCOL_GOPRO) {
         camera_controller_state_t state;
         gopro_get_state(&state);
-        gopro_request_recording(!state.recording);
+        camera_controller_request_recording(!state.recording);
         return;
     }
     dji_action2_state_t action2;
@@ -353,9 +417,19 @@ void camera_controller_short_press(void)
     camera_controller_request_recording(!state.recording);
 }
 
-esp_err_t camera_controller_request_pairing(void)
+static esp_err_t request_pairing(void)
 {
-    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (!s_initialized || s_command_busy || s_pair_queued) return ESP_ERR_INVALID_STATE;
+    camera_controller_state_t state;
+    camera_controller_get_state(&state);
+    if (state.command_pending || ((state.link_connected || state.phase == CAMERA_PHASE_READY) &&
+        (!state.recording_valid || state.recording || state.saving))) return ESP_ERR_INVALID_STATE;
+    esp_err_t clear = management_stop_save(false, 0);
+    if (clear != ESP_OK) return clear;
+    portENTER_CRITICAL(&s_feedback_mux);
+    s_record_feedback = (recording_feedback_t){0};
+    ++s_feedback_generation;
+    portEXIT_CRITICAL(&s_feedback_mux);
     if (s_selected == CAMERA_PROTOCOL_GOPRO) { gopro_request_pairing(); return ESP_OK; }
     if (s_command_busy || atomic_exchange(&s_pair_queued, true)) {
         return ESP_ERR_INVALID_STATE;
@@ -371,7 +445,15 @@ esp_err_t camera_controller_request_pairing(void)
     return ESP_ERR_NO_MEM;
 }
 
-void camera_controller_get_state(camera_controller_state_t *state)
+esp_err_t camera_controller_request_pairing(void)
+{
+    if (atomic_flag_test_and_set(&s_request_lock)) return ESP_ERR_INVALID_STATE;
+    esp_err_t result = request_pairing();
+    atomic_flag_clear(&s_request_lock);
+    return result;
+}
+
+static void get_raw_state(camera_controller_state_t *state)
 {
     if (state == NULL) {
         return;
@@ -444,4 +526,25 @@ void camera_controller_get_state(camera_controller_state_t *state)
             state->phase = CAMERA_PHASE_SCANNING;
         }
     }
+}
+
+void camera_controller_get_state(camera_controller_state_t *state)
+{
+    if (!state) return;
+    portENTER_CRITICAL(&s_feedback_mux);
+    uint32_t generation = s_feedback_generation;
+    portEXIT_CRITICAL(&s_feedback_mux);
+    get_raw_state(state);
+    portENTER_CRITICAL(&s_feedback_mux);
+    camera_telemetry_apply(&s_telemetry, (uint32_t)(esp_timer_get_time() / 1000), management_settings(), state);
+    /* A snapshot taken before a new request cannot confirm that request. */
+    if (generation == s_feedback_generation)
+        recording_feedback_apply(&s_record_feedback, (uint32_t)(esp_timer_get_time() / 1000), state);
+    else
+        state->record_result = s_record_feedback.result;
+    state->manual_command_sequence = s_manual_sequence;
+    state->manual_record_target = s_manual_target;
+    state->stop_delay_remaining = s_stop_countdown;
+    state->stop_persistence_error = !management_stop_healthy();
+    portEXIT_CRITICAL(&s_feedback_mux);
 }

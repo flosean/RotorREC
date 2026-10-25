@@ -95,7 +95,11 @@ static void bridge_task(void *argument)
     char osd_sent[4][17] = {{0}};
     bf_osd_state_t osd_state = {0};
     bf_mode_map_t map = { .mode_bit = -1, .failsafe_bit = -1 };
-    bf_record_policy_t policy = {0};
+    bf_mode_map_t ground_map = {.mode_bit = -1, .failsafe_bit = -1, .arm_bit = -1};
+    bool ground_map_valid = false;
+    bf_automation_t policy = {0};
+    uint32_t manual_sequence = 0;
+    bool restore_stop = true;
     msp_v2_reply_t reply;
     uint32_t map_ms = 0;
     unsigned failures = 0;
@@ -105,16 +109,30 @@ static void bridge_task(void *argument)
         uint32_t cycle_start = now_ms();
         if (management_take_control_reset()) {
             connected = false; map_valid = false; last_input_valid = false;
-            policy = (bf_record_policy_t){0};
+            policy = (bf_automation_t){0};
+            camera_controller_stop_countdown(0, 0);
+            restore_stop = true;
         }
         if (management_active()) {
             connected = false; map_valid = false; last_input_valid = false;
-            policy = (bf_record_policy_t){0};
+            policy = (bf_automation_t){0};
+            camera_controller_stop_countdown(0, 0);
+            restore_stop = true;
             service_for(20);
             continue;
         }
+        if (restore_stop) {
+            bool pending;
+            uint8_t remaining;
+            esp_err_t saved = management_stop_load(&pending, &remaining);
+            if (saved == ESP_OK) {
+                if (pending) bf_automation_restore_stop(&policy, now_ms(), remaining, settings);
+                restore_stop = false;
+            } else ESP_LOGW(TAG, "Could not load pending stop: %s", esp_err_to_name(saved));
+        }
         if (!connected) {
-            policy = (bf_record_policy_t) {0};
+            /* Keep legitimate queued intents across UART reconnection. The
+             * policy suppresses commands until valid FC state returns. */
             if (!query(MSP_API_VERSION, &reply) || !bf_api_supported(reply.payload, reply.length)) {
                 ESP_LOGW(TAG, "Waiting for MSP API 1.47+ on UART1 (no camera automation)");
                 service_for(2000);
@@ -128,23 +146,33 @@ static void bridge_task(void *argument)
                 continue;
             }
             connected = true;
+            management_fc_state(false, false, false);
             failures = 0;
             osd_supported = true;
             memset(osd_acked, 0, sizeof(osd_acked));
             memset(osd_attempted, 0, sizeof(osd_attempted));
             map_ms = now_ms() - 5000;
-            ESP_LOGI(TAG, "Betaflight API 1.%u connected; USER%u controls camera", api_minor,
-                     (unsigned)(settings->user_mode_id - 39));
+            ESP_LOGI(TAG, "Betaflight API 1.%u connected; recording mode=%u, USER%u input", api_minor,
+                     (unsigned)settings->record_mode, (unsigned)(settings->user_mode_id - 39));
         }
 
         if ((uint32_t)(now_ms() - map_ms) >= 5000) {
             bf_mode_map_t next_map;
-            bool next_valid = bf_mode_map_read(&next_map, settings->user_mode_id, query_mode_page);
+            uint8_t selected = settings->record_mode == RR_RECORD_ARM || settings->record_mode == RR_RECORD_OFF
+                ? 0 : settings->user_mode_id;
+            bool next_valid = bf_mode_map_read(&next_map, selected, query_mode_page);
             if (!next_valid || !map_valid || next_map.mode_bit != map.mode_bit ||
-                next_map.failsafe_bit != map.failsafe_bit) policy = (bf_record_policy_t) {0};
+                next_map.failsafe_bit != map.failsafe_bit || next_map.arm_bit != map.arm_bit) {
+                policy.user = (bf_record_policy_t){0};
+                policy.arm_sample_valid = false;
+            }
             map_valid = next_valid;
             if (map_valid) map = next_map;
-            else ESP_LOGW(TAG, "USER mode / FAILSAFE map unavailable; OSD only, no fallback to ARM/AUX");
+            else ESP_LOGW(TAG, "Selected control / FAILSAFE map unavailable; OSD only");
+            /* Maintenance must observe ARM even if the selected USER is absent. */
+            if (map_valid && map.arm_bit >= 0) {
+                ground_map = map; ground_map.mode_bit = map.arm_bit; ground_map_valid = true;
+            } else ground_map_valid = bf_mode_map_read(&ground_map, 0, query_mode_page);
             map_ms = now_ms();
         }
 
@@ -152,17 +180,34 @@ static void bridge_task(void *argument)
         bf_mode_status_t mode = {0};
         bool input_valid = !settings->link_paused && status_ok && map_valid &&
             bf_mode_status_parse(&map, reply.payload, reply.length, &mode) && !mode.failsafe;
+        bf_mode_status_t ground = {0};
+        bool ground_valid = status_ok && ground_map_valid &&
+            bf_mode_status_parse(&ground_map, reply.payload, reply.length, &ground) && ground.arm_valid;
+        management_fc_state(ground_valid, ground.armed, ground.failsafe);
         camera_controller_state_t camera;
         camera_controller_get_state(&camera);
-        bf_record_action_t action = bf_record_policy_step(&policy, now_ms(), input_valid, mode.active, &camera);
+        if (camera.manual_command_sequence != manual_sequence) {
+            manual_sequence = camera.manual_command_sequence;
+            bf_automation_manual(&policy, now_ms(), camera.manual_record_target);
+        }
+        bf_record_action_t action = bf_automation_step(&policy, now_ms(), input_valid, &mode, settings, &camera);
+        camera.stop_delay_remaining = bf_stop_delay_remaining(&policy, now_ms(), settings);
+        camera_controller_stop_countdown(camera.stop_delay_remaining, manual_sequence);
+        if (!restore_stop) {
+            esp_err_t saved = camera_controller_persist_stop(policy.intent_valid && !policy.target,
+                                                             camera.stop_delay_remaining, manual_sequence);
+            if (saved != ESP_OK) ESP_LOGW(TAG, "Pending stop persistence failed: %s", esp_err_to_name(saved));
+        }
         if (input_valid != last_input_valid) {
             ESP_LOGI(TAG, "Control input %s%s", input_valid ? "valid" : "inhibited",
-                     input_valid ? "; set switch LOW before use" : "; camera recording is unchanged");
+                     input_valid ? (settings->record_mode == RR_RECORD_ARM ? "; ARM state ready" :
+                         settings->record_mode == RR_RECORD_OFF ? "; monitoring only" : "; set USER input LOW before use")
+                         : "; camera recording is unchanged");
             last_input_valid = input_valid;
         }
         if (action != BF_RECORD_NONE) {
-            esp_err_t result = camera_controller_request_recording(action == BF_RECORD_START);
-            ESP_LOGI(TAG, "USER mode -> camera %s: %s (watch actual OSD status)",
+            esp_err_t result = camera_controller_automate_recording(action == BF_RECORD_START, manual_sequence);
+            ESP_LOGI(TAG, "Flight control -> camera %s: %s (watch actual OSD status)",
                      action == BF_RECORD_START ? "START" : "STOP", esp_err_to_name(result));
         }
         if (!status_ok) {
@@ -177,7 +222,7 @@ static void bridge_task(void *argument)
 
         if (connected && status_ok && osd_supported) {
             char desired[4][17];
-            bf_camera_osd_configured(&camera, settings, &osd_state, desired);
+            bf_camera_osd_layout(&camera, settings, &osd_state, management_osd_layout(), desired);
             for (unsigned line = 0; line < osd_count; ++line) {
                 if (osd_acked[line] && strcmp(desired[line], osd_sent[line]) == 0 &&
                     (uint32_t)(now_ms() - osd_attempt_ms[line]) < 5000) continue;

@@ -14,8 +14,40 @@ MAGIC = b"RREC"
 HEADER = struct.Struct("<4sBBIIH")
 HELLO, INFO, SET_CAMERA, PAIR, BEGIN, DATA, END, ABORT, REBOOT, EXIT = range(1, 11)
 SET_SETTINGS = 11
+TELEMETRY = 12
+OSD_LAYOUT, SET_OSD_LAYOUT = 13, 14
+RESET = 18
+
+def encode_layout(rows):
+    if not isinstance(rows, list) or len(rows) != 4:
+        raise ValueError("OSD needs four rows")
+    wire = bytearray(257)
+    wire[0] = 1
+    for i, row in enumerate(rows):
+        if not isinstance(row, str) or len(row) > 63 or any(not 32 <= ord(c) <= 126 for c in row):
+            raise ValueError("Each OSD row allows 63 ASCII characters and displays 16 cells")
+        tokens = re.findall(r"\{(?:state|battery|elapsed|remaining|format|space|mode)\}", row)
+        literal = re.sub(r"\{(?:state|battery|elapsed|remaining|format|space|mode)\}", "", row)
+        if "{" in literal or "}" in literal or len(tokens) > 8:
+            raise ValueError("Unknown OSD token or more than eight tokens in one row")
+        wire[1 + i * 64:1 + i * 64 + len(row)] = row.encode("ascii")
+    return bytes(wire)
+
+def decode_layout(wire):
+    if len(wire) != 257 or wire[0] != 1:
+        raise ValueError("Invalid OSD layout version / length")
+    rows = []
+    for i in range(4):
+        row = wire[1 + i * 64:65 + i * 64]
+        if b"\0" not in row:
+            raise ValueError("Unterminated OSD row")
+        rows.append(row.split(b"\0", 1)[0].decode("ascii"))
+    encode_layout(rows)
+    return rows
 CAMERAS = {"action2": 2, "dji-rsdk": 1, "gopro": 3}
 BOARDS = {"rotorrec_esp32c3": 5, "rotorrec_esp32c6": 13}
+RECORD_MODES = {"USER": 0, "ARM": 1, "Button": 2, "Combi": 3, "Off": 4}
+CONTROL_KEYS = {"record_mode", "stop_delay_seconds", "auto_record", "auto_stop", "low_remaining_seconds", "heads_up_warnings"}
 MAX_PAYLOAD = 1040
 PHASES = ("Starting", "Idle", "Searching", "Waiting for approval", "Connecting Action 2",
           "Approve pairing on the camera", "Waiting for camera status", "Connected",
@@ -46,6 +78,26 @@ def encode_settings(value):
             (value["low_battery_percent"] << 11) | (int(value["owns_extra_lines"]) << 18))
 
 
+def encode_control(value):
+    ranges = {"record_mode": (0, 4), "stop_delay_seconds": (0, 30), "low_remaining_seconds": (0, 3600)}
+    if any(type(value.get(key)) is not int or not low <= value[key] <= high for key, (low, high) in ranges.items()) or \
+       any(type(value.get(key)) is not bool for key in ("auto_record", "auto_stop", "heads_up_warnings")):
+        raise ValueError("Invalid recording mode, stop delay or warning threshold")
+    return (0x01000000 | value["record_mode"] | (value["stop_delay_seconds"] << 3) |
+            (int(value["auto_record"]) << 8) | (int(value["auto_stop"]) << 9) |
+            (value["low_remaining_seconds"] << 10) | (int(value["heads_up_warnings"]) << 22))
+
+
+def decode_control(raw):
+    if type(raw) is not int or not 0 <= raw <= 0xFFFFFFFF or raw & 0xFF800000 != 0x01000000:
+        raise ValueError("Unsupported recording settings format")
+    value = dict(record_mode=raw & 7, stop_delay_seconds=(raw >> 3) & 31,
+                 auto_record=bool(raw & (1 << 8)), auto_stop=bool(raw & (1 << 9)),
+                 low_remaining_seconds=(raw >> 10) & 4095, heads_up_warnings=bool(raw & (1 << 22)))
+    encode_control(value)
+    return value
+
+
 def describe_status(value):
     phase = value.get("phase", 0)
     camera = {1: "DJI R SDK", 2: "DJI Action 2", 3: "GoPro"}.get(value.get("camera"), "Unknown")
@@ -56,6 +108,13 @@ def describe_status(value):
         recording = "Camera busy / saving"
     elif not value.get("recording_valid"):
         recording = "Recording status unavailable"
+    feedback = {1: "Waiting for recording start", 2: "Waiting for recording stop",
+                3: "Recording start failed", 4: "Camera has not stopped recording",
+                5: "Recording state unknown — check camera",
+                6: "Recording stopped unexpectedly — check camera"}
+    recording = feedback.get(value.get("record_result"), recording)
+    if not value.get("record_result") and value.get("stop_delay_remaining"):
+        recording = f"Stop requested in {value['stop_delay_remaining']} seconds; wait for camera confirmation"
     battery = f"{value['battery']}%" if value.get("battery_valid") else "Unavailable"
     result = (f"RotorREC {value.get('version', '?')} | {camera}\n"
               f"{PHASES[phase] if 0 <= phase < len(PHASES) else 'Unknown state'} | {recording} | Battery: {battery}")
@@ -65,6 +124,22 @@ def describe_status(value):
         result += "\nChecking the new firmware…"
     if value.get("storage_error"):
         result += "\nSettings storage needs recovery; camera changes are unavailable."
+    if value.get("stop_storage_error"):
+        result += "\nPending STOP could not be saved; check the camera before restart or power off."
+    if "telemetry" in value:
+        telemetry = value["telemetry"]
+        def duration(seconds):
+            return "Unknown" if seconds is None else f"{seconds // 60}:{seconds % 60:02d}"
+        result += (f"\nREC {'~' if telemetry.get('record_time_estimated') else ''}{duration(telemetry.get('record_time'))}"
+                   f" | Remaining {duration(telemetry.get('remain_time'))}"
+                   f" | SD {str(telemetry['remain_capacity']) + ' MB' if telemetry.get('remain_capacity') is not None else 'Unknown'}"
+                   f" | {telemetry.get('parameters') or 'Format unknown'}")
+        warnings = {1: "No SD card", 2: "SD full", 4: "SD format error", 8: "SD write speed error",
+                    16: "Select video mode", 32: "Camera hot", 64: "Camera cold",
+                    128: "Low remaining recording time", 256: "Low camera battery"}
+        active = [message for bit, message in warnings.items() if telemetry.get("warnings", 0) & bit]
+        if active:
+            result += "\nWARNING: " + "; ".join(active)
     if "settings_raw" in value:
         settings = decode_settings(value["settings_raw"])
         result += (f"\nUSER{settings['user_mode_id'] - 39} | {settings['osd_lines']} OSD lines | "
@@ -72,6 +147,12 @@ def describe_status(value):
                    f"{str(settings['low_battery_percent']) + '%' if settings['low_battery_percent'] else 'Off'}")
         if value.get("saved_settings_raw", value["settings_raw"]) != value["settings_raw"]:
             result += "\nSaved settings are waiting for restart."
+    if "control_raw" in value:
+        control = decode_control(value["control_raw"])
+        name = next(name for name, number in RECORD_MODES.items() if number == control["record_mode"])
+        result += f"\nRecording: {name} | Stop delay: {control['stop_delay_seconds']} s"
+        if value.get("saved_control_raw", value["control_raw"]) != value["control_raw"]:
+            result += "\nSaved recording settings are waiting for restart."
     return result
 
 
@@ -182,16 +263,35 @@ class Client:
         value = json.loads(self.request(HELLO if hello else INFO, **request_options))
         if value.get("product") != "RotorREC" or value.get("protocol") != 1:
             raise ValueError("Unsupported device")
+        if value.get("telemetry_version") == 1:
+            value["telemetry"] = json.loads(self.request(TELEMETRY, **request_options))
+        if value.get("osd_layout_version") == 1:
+            layouts = self.request(OSD_LAYOUT, **request_options)
+            if len(layouts) != 514:
+                raise ValueError("Incomplete OSD layout reply")
+            value["osd_layout"], value["saved_osd_layout"] = decode_layout(layouts[:257]), decode_layout(layouts[257:])
         return value
 
-    def reboot(self, version=None, camera=None, elf_sha256=None, settings_raw=None):
+    def set_layout(self, rows):
+        wire = encode_layout(rows)
+        if self.info().get("osd_layout_version") != 1:
+            raise ValueError("Update firmware to edit the OSD layout")
+        self.request(SET_OSD_LAYOUT, wire)
+        if self.info().get("saved_osd_layout") != rows:
+            raise ValueError("Saved OSD layout did not match")
+        value = self.reboot()
+        if value.get("osd_layout") != rows:
+            raise ValueError("OSD layout did not match after reboot")
+        return value
+
+    def reboot(self, version=None, camera=None, elf_sha256=None, settings_raw=None, control_raw=None):
         try:
             self.request(REBOOT, timeout=1, retries=1)
         except TimeoutError:
             pass  # The ESP may reboot before the reply reaches the host.
-        return self.wait_for_boot(version, camera, elf_sha256, settings_raw)
+        return self.wait_for_boot(version, camera, elf_sha256, settings_raw, control_raw)
 
-    def wait_for_boot(self, version=None, camera=None, elf_sha256=None, settings_raw=None):
+    def wait_for_boot(self, version=None, camera=None, elf_sha256=None, settings_raw=None, control_raw=None):
         # A lost END ACK is also recoverable: the receiver reboots on session expiry.
         # Only HELLO/INFO here, so we never extend the old committed session.
         deadline = time.monotonic() + 40
@@ -213,6 +313,8 @@ class Client:
                     raise RuntimeError("Device booted a different image (possibly rollback)")
                 if settings_raw is not None and value.get("settings_raw") != settings_raw:
                     raise RuntimeError("Settings did not persist or the device booted older firmware")
+                if control_raw is not None and value.get("control_raw") != control_raw:
+                    raise RuntimeError("Recording settings did not persist after reboot")
                 return value
             except TimeoutError:
                 # A pending image can roll back after accepting our HELLO.
@@ -223,18 +325,46 @@ class Client:
                 time.sleep(.2)
         raise TimeoutError("Reboot could not be verified; reconnect and inspect device status")
 
+    def reset_device(self, scope):
+        if type(scope) is not int or scope not in (1, 2):
+            raise ValueError("Reset scope must be 1 (pairings) or 2 (factory)")
+        current = self.info()
+        if current.get("reset_capable") != 1:
+            raise ValueError("Update firmware before resetting this device")
+        if current.get("wifi_active"):
+            raise ValueError("Use the Wi-Fi web page to reset a device in Wi-Fi mode")
+        self.request(RESET, bytes([scope]))
+        if self.info().get("reset_pending") != scope:
+            raise RuntimeError("Reset request was not saved")
+        value = self.reboot()
+        if value.get("reset_pending") != 0 or value.get("storage_error") != 0:
+            raise RuntimeError("Reset did not finish; reconnect and inspect storage status")
+        if scope == 1 and not decode_settings(value["settings_raw"])["link_paused"]:
+            raise RuntimeError("Pairing removal did not enable Link Pause")
+        return value
+
     def set_settings(self, **changes):
-        if set(changes) - {"user_mode_id", "osd_lines", "led_percent", "low_battery_percent", "link_paused"}:
+        if set(changes) - ({"user_mode_id", "osd_lines", "led_percent", "low_battery_percent", "link_paused"} | CONTROL_KEYS):
             raise ValueError("Unknown setting")
         current = self.info()
         if "settings_raw" not in current:
             raise ValueError("This firmware does not support saved settings; update it first")
         value = decode_settings(current.get("saved_settings_raw", current["settings_raw"]))
+        extended = "control_raw" in current
+        if extended:
+            value.update(decode_control(current.get("saved_control_raw", current["control_raw"])))
+        elif set(changes) & CONTROL_KEYS:
+            raise ValueError("Update firmware before changing recording controls")
         value.update(changes)
         value["owns_extra_lines"] |= value["osd_lines"] == 4
         raw = encode_settings(value)
-        self.request(SET_SETTINGS, struct.pack("<I", raw))
-        return self.reboot(settings_raw=raw)
+        expected = dict(settings_raw=raw)
+        payload = struct.pack("<I", raw)
+        if extended:
+            expected["control_raw"] = encode_control(value)
+            payload += struct.pack("<I", expected["control_raw"])
+        self.request(SET_SETTINGS, payload)
+        return self.reboot(**expected)
 
     def update(self, metadata, image, progress=print, cancelled=lambda: False):
         current = self.info()
@@ -358,14 +488,24 @@ def run_device(args, log=print, entered=lambda: None, cancelled=lambda: False):
                 raise TimeoutError("Pairing not confirmed; check the camera approval screen and device status")
         elif args.action == "settings":
             changes = {key: getattr(args, key) for key in
-                       ("osd_lines", "led_percent", "low_battery_percent") if getattr(args, key) is not None}
+                       ("osd_lines", "led_percent", "low_battery_percent", *sorted(CONTROL_KEYS))
+                       if getattr(args, key, None) is not None}
             if args.user is not None:
                 changes["user_mode_id"] = args.user + 39
+            if isinstance(changes.get("record_mode"), str):
+                changes["record_mode"] = RECORD_MODES[changes["record_mode"]]
             if not changes:
                 raise ValueError("Choose at least one setting")
             value = client.set_settings(**changes)
         elif args.action == "link-pause":
             value = client.set_settings(link_paused=args.pause == "on")
+        elif args.action == "osd":
+            rows = args.rows if hasattr(args, "rows") else json.loads(Path(args.file).read_text(encoding="utf-8"))
+            value = client.set_layout(rows)
+        elif args.action == "reset":
+            if not args.confirm:
+                raise ValueError("Reset deletes pairing data; pass --confirm to proceed")
+            value = client.reset_device(1 if args.scope == "pairings" else 2)
         elif args.action == "update":
             value = client.update(*package, progress=log, cancelled=cancelled)
         log(json.dumps(value, indent=2))
@@ -383,11 +523,11 @@ def gui():
     import queue
     import threading
     import tkinter as tk
-    from tkinter import filedialog, ttk
+    from tkinter import filedialog, messagebox, ttk
     from serial.tools import list_ports
     root = tk.Tk()
     root.title("RotorREC — camera & firmware")
-    root.geometry("880x660")
+    root.geometry("880x760")
     frame = ttk.Frame(root, padding=12)
     frame.pack(fill="both", expand=True)
     ttk.Label(frame, text="Close Betaflight Configurator. Power the camera controller. Use only on the bench.").pack(anchor="w")
@@ -414,11 +554,31 @@ def gui():
                             state="readonly" if key in ("user", "osd_lines") else "normal")
         field.set(initial); field.pack(side="left", padx=3)
         fields[key] = field
+    control_row = ttk.Frame(frame); control_row.pack(fill="x", pady=6)
+    for label, key, choices, initial in [
+        ("Recording", "record_mode", tuple(RECORD_MODES), "USER"),
+        ("Stop delay (s)", "stop_delay_seconds", (0, 3, 5, 10, 30), 5),
+        ("Low remaining (s)", "low_remaining_seconds", (0, 30, 60, 120), 0)]:
+        ttk.Label(control_row, text=label).pack(side="left", padx=3)
+        field = ttk.Combobox(control_row, values=choices, width=8,
+                            state="readonly" if key == "record_mode" else "normal")
+        field.set(initial); field.pack(side="left", padx=3); fields[key] = field
+    flags_row = ttk.Frame(frame); flags_row.pack(fill="x", pady=6)
+    for label, key in [("Record on ARM", "auto_record"), ("Stop on disarm", "auto_stop"),
+                       ("Heads-up warnings", "heads_up_warnings")]:
+        ttk.Label(flags_row, text=label).pack(side="left", padx=3)
+        field = ttk.Combobox(flags_row, values=("On", "Off"), width=5, state="readonly")
+        field.set("On"); field.pack(side="left", padx=3); fields[key] = field
     settings_ready = False
+    control_ready = False
+    last_info = {}
     def forget_settings(event=None):
-        nonlocal settings_ready
+        nonlocal settings_ready, control_ready, last_info
         settings_ready = False
+        control_ready = False
+        last_info = {}
         direct.set(False)
+        set_controls_busy(False)
     port.bind("<<ComboboxSelected>>", forget_settings)
     port.bind("<KeyRelease>", forget_settings)
     uart.bind("<KeyRelease>", forget_settings)
@@ -436,9 +596,9 @@ def gui():
         direct_toggle.configure(state="disabled" if value else "normal")
         camera.configure(state="disabled" if value else "readonly")
         for key, field in fields.items():
-            field.configure(state="disabled" if value else
-                            "readonly" if key in ("user", "osd_lines") else "normal")
-    def start(action):
+            field.configure(state="disabled" if value or (key in CONTROL_KEYS and not control_ready) else
+                            "readonly" if key in ("user", "osd_lines", "record_mode", "auto_record", "auto_stop", "heads_up_warnings") else "normal")
+    def start(action, layout_rows=None):
         nonlocal busy
         if busy:
             return
@@ -455,9 +615,27 @@ def gui():
                 return
             args = argparse.Namespace(action=action, port=port.get(), uart=selected_uart,
                                       direct=direct.get(), camera=camera.get(), file=file)
+            if action in ("reset-pairings", "reset-factory"):
+                if last_info.get("reset_capable") != 1:
+                    raise ValueError("Read status from firmware supporting reset first")
+                factory = action == "reset-factory"
+                message = "Delete all camera pairings" + (", settings, OSD layout and Wi-Fi credentials?" if factory else " and enable Link Pause? Other settings stay saved.")
+                if not messagebox.askyesno("Confirm reset", message + "\nConfirm the camera has stopped recording.", parent=root):
+                    return
+                args.action = "reset"; args.scope = "factory" if factory else "pairings"; args.confirm = True
+            if action == "osd":
+                if last_info.get("osd_layout_version") != 1:
+                    raise ValueError("Read status from firmware supporting OSD layouts first")
+                encode_layout(layout_rows)
+                args.rows = layout_rows
             if action == "settings":
                 for key, field in fields.items():
-                    setattr(args, key, int(field.get()))
+                    if key in CONTROL_KEYS and not control_ready:
+                        continue
+                    selected = field.get()
+                    parsed = RECORD_MODES[selected] if key == "record_mode" else \
+                        selected == "On" if key in ("auto_record", "auto_stop", "heads_up_warnings") else int(selected)
+                    setattr(args, key, parsed)
                 if not 1 <= args.led_percent <= 100 or not 0 <= args.low_battery_percent <= 100:
                     raise ValueError("LED must be 1–100%; low battery must be 0–100%")
             elif action in ("pause", "resume"):
@@ -484,8 +662,36 @@ def gui():
     for label, action in [("Save settings & restart", "settings"), ("Pause camera link", "pause"),
                           ("Resume camera link", "resume")]:
         ttk.Button(settings_buttons, text=label, command=lambda a=action: start(a)).pack(side="left", padx=3)
+    def edit_layout():
+        if busy or last_info.get("osd_layout_version") != 1:
+            output.insert("end", "Read status from firmware supporting OSD layouts first.\n"); return
+        popup = tk.Toplevel(root); popup.title("OSD layout — 16 visible cells per row")
+        ttk.Label(popup, text="{state} {battery} {elapsed} {remaining} {format} {space} {mode}\nASCII text; blank keeps default. Errors always occupy row 1.").pack(padx=12, pady=8)
+        entries = []
+        for i, value in enumerate(last_info["saved_osd_layout"]):
+            row = ttk.Frame(popup); row.pack(fill="x", padx=12, pady=3)
+            ttk.Label(row, text=f"Row {i + 1}").pack(side="left")
+            field = ttk.Entry(row, width=55); field.insert(0, value); field.pack(side="left"); entries.append(field)
+        def save():
+            rows = [field.get() for field in entries]
+            try: encode_layout(rows)
+            except ValueError as exc:
+                output.insert("end", str(exc) + "\n"); return
+            popup.destroy(); start("osd", rows)
+        ttk.Button(popup, text="Save, restart and verify", command=save).pack(pady=8)
+    def export_diagnostics():
+        if busy or not last_info: return
+        filename = filedialog.asksaveasfilename(defaultextension=".json", initialfile="rotorrec-diagnostics.json")
+        if filename:
+            Path(filename).write_text(json.dumps({"device": last_info, "log": output.get("1.0", "end"),
+                "hardware_verified": False}, indent=2), encoding="utf-8")
+    ttk.Button(settings_buttons, text="Edit OSD", command=edit_layout).pack(side="left", padx=3)
+    ttk.Button(settings_buttons, text="Export diagnostics", command=export_diagnostics).pack(side="left", padx=3)
+    reset_buttons = ttk.Frame(frame); reset_buttons.pack(fill="x", before=output, pady=4)
+    ttk.Button(reset_buttons, text="Remove all camera pairings", command=lambda: start("reset-pairings")).pack(side="left", padx=3)
+    ttk.Button(reset_buttons, text="Factory reset", command=lambda: start("reset-factory")).pack(side="left", padx=3)
     def poll():
-        nonlocal busy, settings_ready
+        nonlocal busy, settings_ready, control_ready, last_info
         while not events.empty():
             item = events.get_nowait()
             if item == ("passthrough",):
@@ -497,12 +703,23 @@ def gui():
                 if item.startswith("{"):
                     try:
                         value = json.loads(item)
+                        last_info = value
                         if value.get("camera") in CAMERAS.values():
                             camera.set(next(name for name, ident in CAMERAS.items() if ident == value["camera"]))
                         if "settings_raw" in value:
                             saved = decode_settings(value.get("saved_settings_raw", value["settings_raw"]))
+                            control_ready = "control_raw" in value
+                            if control_ready:
+                                saved.update(decode_control(value.get("saved_control_raw", value["control_raw"])))
                             for key, field in fields.items():
-                                field.set(saved["user_mode_id"] - 39 if key == "user" else saved[key])
+                                if key in CONTROL_KEYS and not control_ready:
+                                    continue
+                                selected = saved["user_mode_id"] - 39 if key == "user" else saved[key]
+                                if key == "record_mode":
+                                    selected = next(name for name, number in RECORD_MODES.items() if number == selected)
+                                elif type(selected) is bool:
+                                    selected = "On" if selected else "Off"
+                                field.set(selected)
                             settings_ready = True
                         else:
                             settings_ready = False
@@ -513,6 +730,7 @@ def gui():
         root.after(100, poll)
     # Do not terminate a Flash transfer by accidentally closing the window.
     root.protocol("WM_DELETE_WINDOW", lambda: None if busy else root.destroy())
+    set_controls_busy(False)
     poll(); root.mainloop()
 
 
@@ -525,11 +743,21 @@ def main():
     commands.add_parser("gui")
     commands.add_parser("info")
     commands.add_parser("pair")
+    reset_command = commands.add_parser("reset", help="Remove all camera pairings or restore factory settings")
+    reset_command.add_argument("scope", choices=("pairings", "factory"))
+    reset_command.add_argument("--confirm", action="store_true", required=True)
+    layout = commands.add_parser("osd", help="Save a JSON array of four OSD templates, restart and verify")
+    layout.add_argument("file")
     settings = commands.add_parser("settings", help="Save selected settings and restart; unspecified values are retained")
     settings.add_argument("--user", type=int, choices=range(1, 5))
     settings.add_argument("--osd-lines", type=int, choices=(2, 4))
     settings.add_argument("--led-percent", type=int, choices=range(1, 101))
     settings.add_argument("--low-battery-percent", type=int, choices=range(0, 101))
+    settings.add_argument("--record-mode", choices=RECORD_MODES)
+    settings.add_argument("--stop-delay-seconds", type=int, choices=range(31))
+    settings.add_argument("--low-remaining-seconds", type=int, choices=range(3601))
+    for option in ("auto-record", "auto-stop", "heads-up-warnings"):
+        settings.add_argument("--" + option, action=argparse.BooleanOptionalAction, default=None)
     pause = commands.add_parser("link-pause", help="Save Link Pause on/off and restart; retains pairing")
     pause.add_argument("pause", choices=("on", "off"))
     camera = commands.add_parser("camera"); camera.add_argument("camera", choices=CAMERAS)

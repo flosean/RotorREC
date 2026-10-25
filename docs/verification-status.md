@@ -1,6 +1,24 @@
 # RotorREC verification status
 
-Updated: 2026-10-22. Firmware version: 1.2.0-dev (unreleased; new hardware acceptance pending).
+Updated: 2026-10-25. Firmware version: 1.2.0-dev (unreleased; new hardware acceptance pending).
+
+## 2026-10-25 recording and setup software completion
+
+The four requested areas (recording failure feedback, ARM/stop delay, camera telemetry/warnings, setup convenience) passed the [eight-part completion audit](recording-completion-plan.md). This includes the phone Wi-Fi interface and update path, OSD templates, separate desktop BF OSD placement, diagnostics, pairing removal and factory reset. No physical serial port, camera or FC was accessed. Historical results below are not substitutes for this version's hardware acceptance.
+
+- Native management/reset/Wi-Fi-server/BOOT tests pass, including storage/OTA failures, every reset commit boundary, malformed HTTP frames, token/origin checks, timeouts, startup failures, idle exit and release-only button thresholds. A failed STOP save remains visible after reading the old value, until a successful save.
+- Betaflight reports 11,966 checks (assertions, not independent scenarios); LCD, recording feedback, automation and telemetry suites also pass. Actual DJI callbacks/handshake/DUML/controller and GoPro protocol suites pass with simulated transports.
+- Python 25 tests, Node 24 tests (17 manager, 7 BF setup), and the Tk GUI regression pass. The actual Web Serial and 390px Wi-Fi interface simulations each pass 18 checks; BF UI passes 9, including ARM after preview and USB exception recovery. These do not exercise actual RF or hardware drivers.
+- ESP-IDF 5.5.5 builds pass after the final firmware changes. C3 app: 1,568,624 / 2,031,616 bytes; C6: 2,037,264 / 4,128,768 bytes. Slot space remains 23% / 51%; this is not a runtime heap measurement.
+- `build-audit-c3/rotorrec-c3-update.zip` and `build-audit-c6/rotorrec-c6-update.zip` were regenerated and loaded by both real Python and JavaScript package readers. Manifest, image bytes, board, size, SHA-256 and ELF fingerprint agree. Packages are local and unflashed.
+- Current user-flow, camera, GoPro, Betaflight and maintenance documents have been reconciled with implementation. Local Markdown links and `git diff --check` pass. No commit, push or release publication was performed.
+
+| Final app | SHA-256 | ELF fingerprint |
+| --- | --- | --- |
+| C3 | `5c93da31bf723c9346c588e7e2790055b30b2dd313497dbf85dcdcc31b5aef78` | `32758f5b1df16f8b4697f61d31ae83a5de82a4e35e83c930c14cec413c1938e6` |
+| C6 | `1ba6796ec8d095b681a128f644cbf30de7d711a77ae52217b26da10ad9072494` | `5cd7d88bf46621050cd2c6bfc1aecf85a56771b832fd1ddebe4494510a7eb0c5` |
+
+Remaining physical acceptance: exact camera/firmware compatibility, real radio timing and phone browser behavior on the AP, recording files, FC passthrough recovery, OSD/LCD/LED appearance, runtime heap, power-loss persistence and bootloader rollback on both boards. The user requested software-only completion while hardware is unavailable. Wi-Fi maintenance disables BLE/FC control; BF placement uses desktop USB, and Wi-Fi factory reset cannot verify completion over credentials it has just erased.
 
 **The project owner confirms that Betaflight UART communication and OSD functionality have been tested on real hardware, used successfully, and work correctly.** This replaces the earlier pending-hardware status for UART and OSD. The confirmation did not include a specific FC firmware/board combination or a detailed cycle-count and fault-injection record.
 
@@ -105,7 +123,7 @@ Review totals: Standards 1 finding resolved, worst was the GUI connection race; 
 ## Known limitations
 
 - When DJI is selected, without a saved camera, an unsuccessful initial search requires a BOOT hold or RESET. Saved targets reconnect automatically. GoPro repeats discovery automatically.
-- Action 2 recording duration and remaining capacity are outside the current delivery scope. Unverified fields are not treated as valid data.
+- Action 2 elapsed recording time is estimated only after a confirmed OFF-to-ON transition and marked `~`; reconnecting to an already recording camera leaves it unknown. Remaining capacity is unavailable. Unverified fields are not treated as valid data.
 - Action 2 pairing retains fixed fields from an existing remote flow; behavior across multiple cameras has not been established.
 - C3 uses RGB byte order based on observed color reversal. Other boards may differ; host tests cannot verify visible color.
 - The FC may retain the last OSD text after module power loss or UART disconnection. See [Betaflight setup](betaflight-setup.md).

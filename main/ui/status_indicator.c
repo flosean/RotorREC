@@ -2,6 +2,8 @@
 
 status_indicator_t status_indicator_select(const camera_controller_state_t *s)
 {
+    if (s->phase != CAMERA_PHASE_LINK_PAUSED && (s->record_result != CAMERA_RECORD_OK || s->stop_persistence_error || s->warnings))
+        return INDICATOR_UNCERTAIN;
     switch (s->phase) {
     case CAMERA_PHASE_LINK_PAUSED: return INDICATOR_PAUSED;
     case CAMERA_PHASE_READY:

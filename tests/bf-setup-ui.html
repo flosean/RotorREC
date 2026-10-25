@@ -1,0 +1,59 @@
+<!doctype html><meta charset="utf-8"><title>Betaflight OSD UI regression</title>
+<style>body{font:14px monospace}pre{white-space:pre-wrap}iframe{width:100%;height:700px}</style>
+<pre id="results">Simulated FC only; no hardware or serial permission is accessed.</pre><iframe title="BF setup under test"></iframe>
+<script type="module">
+import {MSP, mspFrame} from '../tools/web-configurator/bf-setup.mjs';
+const report = line => document.getElementById('results').textContent += '\n' + line;
+const check = (value, label) => { if (!value) throw Error(label); report('PASS ' + label); };
+async function until(predicate) { const end = performance.now() + 5000; while (!predicate()) { if (performance.now() > end) throw Error('UI timed out'); await new Promise(r => setTimeout(r, 15)); } }
+const calls = [], positions = [0xc800, 4096, 0, 0];
+let failOpen = true, armed = false, saved;
+const port = {
+  async open() {
+    if (failOpen) { failOpen = false; throw Error('injected port open failure'); }
+    this.readable = new ReadableStream({start: controller => { this.controller = controller; }});
+    this.writable = new WritableStream({write: wire => {
+      const command = wire[4] | wire[5] << 8, p = wire.subarray(8, -1); calls.push(command);
+      let payload = new Uint8Array();
+      if (command === MSP.API) payload = Uint8Array.of(0, 1, 47);
+      else if (command === MSP.VARIANT) payload = new TextEncoder().encode('BTFL');
+      else if (command === MSP.BOXIDS) payload = Uint8Array.of(0, 27, 40);
+      else if (command === MSP.STATUS) { payload = new Uint8Array(22); payload[16] = 5; payload[6] = Number(armed); }
+      else if (command === MSP.OSD) {
+        payload = new Uint8Array(191); payload[0] = 1; payload[7] = 85; payload[189] = 3; payload[190] = 1;
+        positions.forEach((value, i) => new DataView(payload.buffer).setUint16(172 + i * 2, value, true));
+      } else if (command === MSP.CANVAS) payload = Uint8Array.of(53, 20);
+      else if (command === MSP.MODES) payload = Uint8Array.of(40, 1, 32, 48);
+      else if (command === MSP.SET_OSD) positions[p[0] - 81] = p[1] | p[2] << 8;
+      else if (command === MSP.SAVE) saved = [...positions];
+      else throw Error('Unexpected MSP command');
+      this.controller.enqueue(mspFrame(command, payload, '>'));
+    }});
+  }, async close() {}, async setSignals() {}
+};
+try {
+  const frame = document.querySelector('iframe'), doc = frame.contentDocument, win = frame.contentWindow;
+  const source = await (await fetch('../tools/web-configurator/bf-setup.html')).text();
+  doc.open(); doc.write(source.replace('<head>', '<head><base href="/tools/web-configurator/">').replace('<script type="module" src="bf-setup-app.mjs"><' + '/script>', '')); doc.close();
+  Object.defineProperty(win.navigator, 'serial', {value: {requestPort: async () => port}, configurable: true});
+  const script = doc.createElement('script'); script.type = 'module'; script.textContent = "import './bf-setup-app.mjs'; window.testLoaded = true;"; doc.body.append(script);
+  await until(() => win.testLoaded);
+  const $ = id => doc.getElementById(id);
+  async function click(id) { $(id).click(); await until(() => !$('read').disabled); }
+  await click('read'); check($('status').textContent.includes('injected') && $('close').disabled, 'failed port open releases connection for retry');
+  await click('read'); check($('status').textContent.includes('1.47') && $('modes').textContent.includes('AUX2'), 'actual page reads identity and USER mapping');
+  check(!calls.includes(MSP.SET_OSD) && !calls.includes(MSP.SAVE), 'reading never writes FC configuration');
+  await click('preset'); await click('preview'); check($('apply').disabled, 'preview alone cannot apply changes');
+  $('ground').checked = true; $('ground').dispatchEvent(new win.Event('change'));
+  armed = true; await click('apply'); check(!calls.includes(MSP.SET_OSD), 'ARM after preview blocks all writes');
+  armed = false; await click('read'); await click('preset'); await click('preview');
+  $('ground').checked = true; $('ground').dispatchEvent(new win.Event('change')); await click('apply');
+  check(saved?.length === 4 && $('status').textContent.includes('保存並讀回一致'), 'explicit apply saves four positions and verifies readback');
+  check((saved[0] & 0xc000) === 0xc000 && (saved[1] & 4096) === 4096, 'unrelated type bits and profile visibility preserved');
+  port.controller.error(Error('injected unplug')); await click('read');
+  check($('placement').disabled && $('close').disabled && !$('read').disabled, 'USB read exception clears stale proposal and permits reconnect');
+  await click('read'); await click('close');
+  check($('placement').disabled && $('close').disabled, 'disconnect clears editable snapshot');
+  report('ALL BF UI CHECKS PASSED (simulated hardware)'); document.title = 'PASS — Betaflight setup UI';
+} catch (error) { report('FAIL ' + error.stack); document.title = 'FAIL — Betaflight setup UI'; }
+</script>

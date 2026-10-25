@@ -126,7 +126,35 @@ void dashboard_refresh(const camera_controller_state_t *state)
     }
     lv_obj_set_style_text_color(s_connection_label, lv_color_hex(connection_color), 0);
 
-    if (state->protocol == CAMERA_PROTOCOL_DJI_ACTION2 || state->protocol == CAMERA_PROTOCOL_GOPRO) {
+    if (state->record_result != CAMERA_RECORD_OK || state->stop_persistence_error) {
+        lv_label_set_text(s_record_label, state->record_result != CAMERA_RECORD_OK
+            ? camera_record_message(state->record_result) : "!STOP NOT SAVED");
+        lv_obj_set_style_text_color(s_record_label, lv_color_hex(0xFFCC66), 0);
+        lv_label_set_text(s_spec_label, state->recording_valid
+            ? state->recording ? "CAMERA IS RECORDING" : "CAMERA IS NOT RECORDING"
+            : "RECORDING STATE UNKNOWN");
+        lv_label_set_text(s_detail_label, "CHECK CAMERA BEFORE POWER OFF");
+        return;
+    }
+    if (state->warnings) {
+        lv_label_set_text(s_record_label, camera_warning_message(state->warnings));
+        lv_obj_set_style_text_color(s_record_label, lv_color_hex(0xFFCC66), 0);
+        lv_label_set_text(s_spec_label, state->recording_valid
+            ? state->recording ? "CAMERA IS RECORDING" : "CAMERA IS NOT RECORDING" : "RECORDING STATE UNKNOWN");
+        lv_label_set_text(s_detail_label, "CHECK CAMERA BEFORE FLIGHT");
+        return;
+    }
+    if (state->stop_delay_remaining) {
+        lv_label_set_text_fmt(s_record_label, "STOP IN %u SECONDS", state->stop_delay_remaining);
+        lv_obj_set_style_text_color(s_record_label, lv_color_hex(0xFFCC66), 0);
+        lv_label_set_text(s_spec_label, state->recording_valid
+            ? state->recording ? "CAMERA IS RECORDING" : "CAMERA IS NOT RECORDING"
+            : "RECORDING STATE UNKNOWN");
+        lv_label_set_text(s_detail_label, "WAIT FOR CONFIRMED STOP");
+        return;
+    }
+
+    if ((state->protocol == CAMERA_PROTOCOL_DJI_ACTION2 || state->protocol == CAMERA_PROTOCOL_GOPRO) && !state->snapshot.valid) {
         if (state->phase == CAMERA_PHASE_READY) {
             lv_label_set_text(s_record_label, state->command_pending
                 ? "WAITING CAMERA..." : !state->recording_valid ? "STATUS UNKNOWN"
@@ -168,7 +196,7 @@ void dashboard_refresh(const camera_controller_state_t *state)
         lv_label_set_text(s_record_label, state->command_pending ? "WAITING CAMERA..." :
                           state->saving ? "CAMERA BUSY" : "STATUS UNKNOWN");
     } else if (state->recording) {
-        lv_label_set_text_fmt(s_record_label, "REC  %s", elapsed);
+        lv_label_set_text_fmt(s_record_label, "REC  %s%s", state->snapshot.record_time_estimated ? "~" : "", elapsed);
     } else {
         lv_label_set_text_fmt(s_record_label, "%s  STANDBY", state->snapshot.mode);
     }
@@ -184,4 +212,12 @@ void dashboard_refresh(const camera_controller_state_t *state)
     if (state->battery_valid) snprintf(battery, sizeof(battery), "%u%%", state->snapshot.battery);
     else snprintf(battery, sizeof(battery), "--");
     lv_label_set_text_fmt(s_detail_label, "BAT %s   SD %s   REM %s", battery, capacity, remaining);
+}
+
+void dashboard_wifi(const char *ssid, const char *password)
+{
+    lv_label_set_text(s_connection_label, "GROUND WIFI SETUP");
+    lv_label_set_text(s_record_label, ssid);
+    lv_label_set_text_fmt(s_spec_label, "PASSWORD: %s", password);
+    lv_label_set_text(s_detail_label, "192.168.4.1 / HOLD BOOT: EXIT");
 }

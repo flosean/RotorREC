@@ -140,6 +140,10 @@ int main(void)
     extended.mode_param_length = 255;
     new_camera_status_callback(&extended); dji_rs_sdk_get_snapshot(&snapshot);
     assert(!snapshot.parameters_valid);
+    report.temp_over = 3; camera_status_callback(&report); dji_rs_sdk_get_snapshot(&snapshot);
+    assert(snapshot.temperature_valid && snapshot.temperature == 3 && snapshot.mode_valid && snapshot.video_mode);
+    report.temp_over = 255; camera_status_callback(&report); dji_rs_sdk_get_snapshot(&snapshot);
+    assert(!snapshot.temperature_valid);
     dji_rs_sdk_reset(); dji_rs_sdk_get_snapshot(&snapshot);
     assert(!snapshot.valid && !snapshot.record_time_valid && !snapshot.remain_capacity_valid);
     clock_ms = UINT32_MAX - 1000;

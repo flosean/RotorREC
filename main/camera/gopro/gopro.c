@@ -38,6 +38,9 @@ static atomic_bool s_overflow, s_pair_requested;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static camera_controller_state_t s_state;
 static TickType_t s_status_tick;
+static TickType_t s_format_tick;
+static bool s_all_status = true, s_format_enabled = true, s_format_valid;
+static char s_format[21];
 static esp_gatt_if_t s_interface = ESP_GATT_IF_NONE;
 static uint16_t s_conn;
 static bool s_connected, s_remembered;
@@ -254,6 +257,7 @@ static void save_profile(void)
 
 static void disconnect_camera(void)
 {
+    s_format_valid = false;
     phase(CAMERA_PHASE_RECONNECTING);
     /* Allow disconnect cleanup even when the event queue overflowed. */
     atomic_store(&s_overflow, false);
@@ -393,8 +397,17 @@ static bool poll_status(void)
     const uint8_t query[] = {6, GOPRO_QUERY_STATUS, GOPRO_STATUS_BUSY, GOPRO_STATUS_ENCODING,
         GOPRO_STATUS_BATTERY, GOPRO_STATUS_READY, GOPRO_STATUS_PRESET_GROUP};
     gopro_status_t status;
-    if (exchange(2, query, sizeof(query), GOPRO_QUERY_STATUS, 3000) != EXCHANGE_REPLIED ||
-        !gopro_parse_status(s_rx[2].data, s_rx[2].used, &status)) return false;
+    const uint8_t all[] = {1, GOPRO_QUERY_STATUS}; /* Empty ID list means all supported statuses. */
+    exchange_result_t received = exchange(2, s_all_status ? all : query,
+        s_all_status ? sizeof(all) : sizeof(query), GOPRO_QUERY_STATUS, 3000);
+    if (received != EXCHANGE_REPLIED || !gopro_parse_status(s_rx[2].data, s_rx[2].used, &status)) {
+        if (!s_all_status) return false;
+        s_all_status = false; /* Bounded fallback for oversized / unsupported optional replies. */
+        /* Reconnect after an ambiguous exchange, so a late 0x13 cannot become a new reply. */
+        if (received != EXCHANGE_REPLIED) return false;
+        if (exchange(2, query, sizeof(query), GOPRO_QUERY_STATUS, 3000) != EXCHANGE_REPLIED ||
+            !gopro_parse_status(s_rx[2].data, s_rx[2].used, &status)) return false;
+    }
     portENTER_CRITICAL(&s_mux);
     s_status_tick = xTaskGetTickCount();
     s_state.phase = CAMERA_PHASE_READY;
@@ -404,11 +417,25 @@ static bool poll_status(void)
     s_state.recording_valid = status.preset_group == GOPRO_PRESET_GROUP_VIDEO;
     s_state.saving = !status.encoding && (status.busy || !status.ready);
     s_state.battery_valid = true;
-    s_state.snapshot = (camera_snapshot_t) {
-        .valid = true, .recording = status.encoding, .battery = status.battery,
-    };
+    s_state.snapshot = status.telemetry;
+    s_state.snapshot.parameters_valid = status.telemetry.video_mode && s_format_valid &&
+        xTaskGetTickCount() - s_format_tick < pdMS_TO_TICKS(5000);
+    memcpy(s_state.snapshot.parameters, s_format, sizeof(s_format));
     portEXIT_CRITICAL(&s_mux);
     return true;
+}
+
+static void poll_format(void)
+{
+    if (!s_format_enabled) return;
+    /* Read-only query; it cannot change camera presets. Never run during shutter confirmation. */
+    const uint8_t query[] = {3, GOPRO_QUERY_SETTINGS, 2, 3};
+    exchange_result_t result = exchange(2, query, sizeof(query), GOPRO_QUERY_SETTINGS, 1000);
+    s_format_valid = result == EXCHANGE_REPLIED &&
+        gopro_parse_format(s_rx[2].data, s_rx[2].used, s_format);
+    s_format_tick = xTaskGetTickCount();
+    /* Unknown enum / non-video may become known later; missing responses disable until reconnect. */
+    if (result != EXCHANGE_REPLIED) s_format_enabled = false;
 }
 
 void gopro_get_state(camera_controller_state_t *state)
@@ -451,6 +478,7 @@ static void worker(void *argument)
             s_remembered = false;
         }
         if (connect_camera() && setup_camera() && poll_status()) {
+            s_format_enabled = true; s_format_valid = false;
             save_profile();
             ESP_LOGI(TAG, "Open GoPro session ready; select Video mode for record control");
             TickType_t last_keepalive = xTaskGetTickCount() - pdMS_TO_TICKS(2500);
@@ -502,6 +530,7 @@ static void worker(void *argument)
                     if (!command(1, keepalive, sizeof(keepalive))) break;
                     last_keepalive = xTaskGetTickCount();
                 }
+                poll_format();
                 if (!poll_status()) break;
             }
         }

@@ -30,7 +30,7 @@ A saved GoPro reconnects automatically after link loss or module restart. Reconn
 - A start/stop request is sent once. The adapter waits for the command response and subsequent matching camera status; a missing reply or state confirmation causes reconnection, with no automatic shutter resend.
 - A malformed/incomplete status reply cannot partially overwrite state. Data older than five seconds is invalid; disconnection immediately invalidates it when the worker processes the event.
 - The adapter uses bounded packet assembly and checks continuation order. Bond keys are stored by Bluedroid; the target address is stored in the `gopro` NVS namespace.
-- Recording duration, storage capacity, changing presets and automatic cross-brand selection are not exposed by this adapter.
+- Available optional status queries expose recording duration, remaining time/capacity, storage faults, temperature and write-speed warnings; settings queries supply resolution/FPS. Unknown, stale or unsupported fields remain unavailable, and unsupported optional queries fall back to the basic status path. See [telemetry and warning behavior](camera-settings.md). Changing presets, HiLight, waking a powered-off camera, GPS time sync and automatic cross-brand selection are not implemented.
 
 ## Verification
 

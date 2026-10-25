@@ -27,7 +27,7 @@ static void packet_tests(void)
     assert(gopro_rx_feed(&rx, first, sizeof(first)) == 0);
     const uint8_t out_of_order[] = {0x81, 1};
     assert(gopro_rx_feed(&rx, out_of_order, sizeof(out_of_order)) == -1);
-    const uint8_t oversized[] = {0x22, 1, 0}; /* 513 > capacity */
+    const uint8_t oversized[] = {0x28, 1, 0}; /* 2049 > capacity */
     assert(gopro_rx_feed(&rx, oversized, sizeof(oversized)) == -1);
     const uint8_t extended16[] = {0x40, 0, 2, 1, 0};
     assert(gopro_rx_feed(&rx, extended16, sizeof(extended16)) == 1);
@@ -52,6 +52,36 @@ static void packet_tests(void)
     assert(gopro_rx_feed(&rx, first, sizeof(first)) == 0);
     assert(gopro_rx_feed(&other, ack, sizeof(ack)) == 1);
     assert(gopro_rx_feed(&rx, last, sizeof(last)) == 1);
+}
+
+static void telemetry_tests(void)
+{
+    uint8_t reply[] = {0x13, 0, 8,1,0, 10,1,1, 70,1,84, 82,1,1, 96,4,0,0,3,232,
+        13,4,0,1,0,2, 35,4,0,0,1,44, 54,8,0,0,0,0,0,0,8,0,
+        33,1,2, 6,1,1, 85,1,0, 111,1,1};
+    gopro_status_t status;
+    assert(gopro_parse_status(reply, sizeof(reply), &status));
+    camera_snapshot_t s = status.telemetry;
+    assert(s.record_time_valid && s.record_time == 65538 && !s.record_time_estimated);
+    assert(s.remain_time_valid && s.remain_time == 300);
+    assert(s.remain_capacity_valid && s.remain_capacity == 2);
+    assert(s.storage_valid && s.storage == 2 && s.temperature_valid && s.temperature == 2);
+    assert(s.cold_valid && !s.cold && s.write_speed_valid && s.write_speed_error);
+    reply[19] = 233; /* Photo mode: video durations no longer meaningful. */
+    assert(gopro_parse_status(reply, sizeof(reply), &status));
+    assert(status.telemetry.mode_valid && !status.telemetry.video_mode &&
+           !status.telemetry.record_time_valid && !status.telemetry.remain_time_valid);
+    reply[44] = 255; /* Unrecognized SD enum is unknown, never normal. */
+    assert(gopro_parse_status(reply, sizeof(reply), &status) && !status.telemetry.storage_valid);
+    reply[21] = 3; /* Bad known TLV length rejects without partial output. */
+    assert(!gopro_parse_status(reply, sizeof(reply), &status));
+    uint8_t format[] = {0x12,0,2,1,100,3,1,5};
+    char parameters[21] = "unchanged";
+    assert(gopro_parse_format(format, sizeof(format), parameters) && !strcmp(parameters, "5.3K 60"));
+    format[4] = 255;
+    assert(!gopro_parse_format(format, sizeof(format), parameters));
+    assert(!strcmp(parameters, "5.3K 60"));
+    for (size_t i = 0; i < sizeof(format); ++i) assert(!gopro_parse_format(format, i, parameters));
 }
 
 static void status_tests(void)
@@ -127,7 +157,7 @@ static void bridge_tests(void)
 
 int main(void)
 {
-    packet_tests(); status_tests(); advertisement_tests(); bridge_tests();
+    packet_tests(); status_tests(); telemetry_tests(); advertisement_tests(); bridge_tests();
     puts("GoPro packet, status, advertisement and Betaflight integration tests passed");
     return 0;
 }

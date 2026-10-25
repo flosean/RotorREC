@@ -4,11 +4,13 @@
 
 ## Operation
 
-Use **USER1** in Betaflight Modes as the recording switch: active starts recording; inactive stops it. AUX channel, direction, and range are configured in Betaflight. RotorREC does not bind a fixed RC channel or ARM state.
+The default USER mode uses **USER1** in Betaflight Modes as the recording switch: active starts recording; inactive stops it. USER1–4 can be selected in RotorREC; AUX channel, direction, and range are configured in Betaflight. ARM, Button, Combi and Off modes are also available in the current development firmware. ARM/Combi read actual FC ARM state, support independent automatic start/stop and a 0–30 second disarm delay; rearming cancels the delay. See [camera settings](camera-settings.md) for their behavior and persistence.
 
 After startup, UART loss, RXLOSS, or FAILSAFE recovery, hold USER1 inactive for at least 200 ms before activating control. This initial inactive position does not stop an existing recording. During normal operation, each stable mode change produces one explicit start or stop request; a failed request does not cause repeated toggling.
 
-If the camera is not ready, the current switch intent waits for readiness and valid status. A newer switch position replaces it. Invalid FC data clears the intent and requires a return to the inactive position. Camera buttons and BOOT remain available; without a new mode transition, RotorREC does not continuously force the camera to match the switch.
+In USER mode, if the camera is not ready, the current switch intent waits for readiness and valid status. A newer switch position replaces it. Invalid FC data clears unexecuted switch edges and requires a return to the inactive position. A previously accepted pending STOP remains saved and waits for valid FC/camera status before retrying an explicit stop; never a blind toggle. Camera buttons and BOOT remain available. ARM mode can retry its requested start after 20 seconds with fresh status; an accepted manual stop overrides that intent until a new ARM transition.
+
+The desktop [OSD placement tool](../tools/web-configurator/README.md) reads the FC identity, modes, canvas and Custom Message positions. It writes only an explicitly reviewed placement, rechecks disarmed/failsafe status before each write and save, and verifies the result. UART and USER assignments remain in Betaflight Configurator. This tool is separate from module Wi-Fi maintenance.
 
 ## Default wiring
 

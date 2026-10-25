@@ -83,7 +83,8 @@ static bool status_tests(void)
     CHECK(bf_mode_status_parse(&map, status, 21, &result) && result.failsafe);
     CHECK(!bf_mode_status_parse(&map, status, 20, &result));
     CHECK(!bf_mode_map_parse(&map, 40, (const uint8_t[]){0, 27}, 2));
-    CHECK(!bf_mode_map_parse(&map, 0, (const uint8_t[]){0, 27}, 2));
+    CHECK(bf_mode_map_parse(&map, 0, (const uint8_t[]){0, 27}, 2));
+    CHECK(map.arm_bit == 0 && map.mode_bit == 0);
     CHECK(!bf_mode_map_parse(&map, 40, (const uint8_t[]){40, 27, 40}, 3));
     uint8_t ids[40];
     memset(ids, 255, sizeof(ids)); ids[35] = 40; ids[37] = 27;

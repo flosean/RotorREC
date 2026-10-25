@@ -1,6 +1,7 @@
+import {sha256} from './sha256.mjs';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
-export const CMD = Object.freeze({ HELLO: 1, INFO: 2, CAMERA: 3, PAIR: 4, BEGIN: 5, DATA: 6, END: 7, ABORT: 8, REBOOT: 9, EXIT: 10, SETTINGS: 11 });
+export const CMD = Object.freeze({ HELLO: 1, INFO: 2, CAMERA: 3, PAIR: 4, BEGIN: 5, DATA: 6, END: 7, ABORT: 8, REBOOT: 9, EXIT: 10, SETTINGS: 11, TELEMETRY: 12, OSD_LAYOUT: 13, SET_OSD_LAYOUT: 14, WIFI_INFO: 15, WIFI_ENTER: 16, RUN: 17, RESET: 18 });
 export const BOARDS = Object.freeze({ rotorrec_esp32c3: 5, rotorrec_esp32c6: 13 });
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const view = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -53,14 +54,51 @@ export function decodeSettings(raw) {
     led_percent: (raw >>> 4) & 127, low_battery_percent: (raw >>> 11) & 127, owns_extra_lines: !!(raw & (1 << 18)) };
   encodeSettings(s); return s;
 }
+export function encodeControl(s) {
+  if (!['record_mode', 'stop_delay_seconds', 'low_remaining_seconds'].every(k => Number.isInteger(s[k])) ||
+      s.record_mode < 0 || s.record_mode > 4 || s.stop_delay_seconds < 0 || s.stop_delay_seconds > 30 ||
+      s.low_remaining_seconds < 0 || s.low_remaining_seconds > 3600 ||
+      !['auto_record', 'auto_stop', 'heads_up_warnings'].every(k => typeof s[k] === 'boolean'))
+    throw new Error('錄影模式、停錄延遲或剩餘時間門檻無效');
+  return (0x01000000 | s.record_mode | (s.stop_delay_seconds << 3) | (s.auto_record ? 1 << 8 : 0) |
+    (s.auto_stop ? 1 << 9 : 0) | (s.low_remaining_seconds << 10) | (s.heads_up_warnings ? 1 << 22 : 0)) >>> 0;
+}
+export function decodeControl(raw) {
+  if (!Number.isInteger(raw) || raw < 0 || raw > 0xffffffff || (raw & 0xff800000) !== 0x01000000)
+    throw new Error('不支援的錄影設定格式');
+  const s = { record_mode: raw & 7, stop_delay_seconds: (raw >>> 3) & 31, auto_record: !!(raw & (1 << 8)),
+    auto_stop: !!(raw & (1 << 9)), low_remaining_seconds: (raw >>> 10) & 4095, heads_up_warnings: !!(raw & (1 << 22)) };
+  encodeControl(s); return s;
+}
 const hex = bytes => [...bytes].map(v => v.toString(16).padStart(2, '0')).join('');
+export function encodeLayout(rows) {
+  if (!Array.isArray(rows) || rows.length !== 4) throw new Error('OSD 必須有四行');
+  const result = new Uint8Array(257); result[0] = 1;
+  rows.forEach((row, index) => {
+    if (typeof row !== 'string' || row.length > 63 || /[^\x20-\x7e]/.test(row)) throw new Error('每行最多 63 個英數符號，展開後顯示前 16 格');
+    let tokens = 0;
+    const literal = row.replace(/\{(?:state|battery|elapsed|remaining|format|space|mode)\}/g, () => { tokens++; return ''; });
+    if (/[{}]/.test(literal) || tokens > 8) throw new Error('OSD 欄位名稱無效或超過每行 8 個欄位');
+    result.set(encoder.encode(row), 1 + index * 64);
+  });
+  return result;
+}
+export function decodeLayout(bytes) {
+  if (bytes.length !== 257 || bytes[0] !== 1) throw new Error('OSD 版面版本無效');
+  const rows = Array.from({length: 4}, (_, i) => {
+    const row = bytes.subarray(1 + i * 64, 65 + i * 64), end = row.indexOf(0);
+    if (end < 0) throw new Error('OSD 文字未終止');
+    return decoder.decode(row.subarray(0, end));
+  });
+  encodeLayout(rows); return rows;
+}
 export async function imageMetadata(image) {
   if (image.length < 288 || image.length > 0x3f0000 || image[0] !== 0xe9 || view(image).getUint32(32, true) !== 0xabcd5432) throw new Error('需要 RotorREC app 映像，不能使用整合 factory 映像');
   const field = offset => { const bytes = image.subarray(offset, offset + 32), end = bytes.indexOf(0); if (end < 0 || bytes.subarray(0, end).some(b => b > 127)) throw new Error('映像描述無效'); return decoder.decode(bytes.subarray(0, end)); };
   const board = field(80), version = field(48);
   if (!Object.hasOwn(BOARDS, board) || !/^[A-Za-z0-9_.+\-]{1,31}$/.test(version) || view(image).getUint16(12, true) !== BOARDS[board]) throw new Error('不支援的板型或晶片');
   return { product: 'RotorREC', board, version, protocol: 1, layout: 1, size: image.length,
-    sha256: hex(new Uint8Array(await crypto.subtle.digest('SHA-256', image))), elf_sha256: hex(image.subarray(176, 208)) };
+    sha256: hex(await sha256(image)), elf_sha256: hex(image.subarray(176, 208)) };
 }
 async function unzipEntry(compressed, method, length) {
   if (method === 0) { if (compressed.length !== length) throw new Error('ZIP 長度錯誤'); return compressed; }
@@ -128,6 +166,12 @@ export class Client {
   async info(hello = false, timeout = 5000, retries = 3) {
     const value = JSON.parse(decoder.decode(await this.request(hello ? CMD.HELLO : CMD.INFO, undefined, timeout, retries)));
     if (value.product !== 'RotorREC' || value.protocol !== 1 || !Object.hasOwn(BOARDS, value.board)) throw new Error('不支援的裝置或協定');
+    if (value.telemetry_version === 1) value.telemetry = JSON.parse(decoder.decode(await this.request(CMD.TELEMETRY, undefined, timeout, retries)));
+    if (value.osd_layout_version === 1) {
+      const layouts = await this.request(CMD.OSD_LAYOUT, undefined, timeout, retries);
+      if (layouts.length !== 514) throw new Error('OSD 版面回應不完整');
+      value.osd_layout = decodeLayout(layouts.subarray(0, 257)); value.saved_osd_layout = decodeLayout(layouts.subarray(257));
+    }
     return value;
   }
   async reboot(expected = {}) {
@@ -152,11 +196,45 @@ export class Client {
     }
     throw new TimeoutError('無法確認重啟結果。請重新連線檢查版本、指紋與設定。');
   }
+  async resetDevice(scope) {
+    if (scope !== 1 && scope !== 2) throw new Error('無效的重設範圍');
+    const current = await this.info();
+    if (current.reset_capable !== 1) throw new Error('請先更新韌體以使用重設功能');
+    await this.request(CMD.RESET, Uint8Array.of(scope));
+    if ((await this.info()).reset_pending !== scope) throw new Error('重設要求未保存，請重新讀取狀態');
+    if (scope === 2 && current.wifi_active) {
+      // Factory reset removes AP credentials; this connection cannot verify the next boot.
+      try { await this.request(CMD.REBOOT, undefined, 1000, 1); }
+      catch (error) { if (!(error instanceof TimeoutError)) throw error; }
+      return null;
+    }
+    const value = await this.reboot({reset_pending: 0, storage_error: 0});
+    if (scope === 1 && !decodeSettings(value.settings_raw).link_paused)
+      throw new Error('清除配對後未進入 Link Pause，請重新檢查');
+    return value;
+  }
   async setSettings(changes) {
     const current = await this.info();
-    const value = { ...decodeSettings(current.saved_settings_raw ?? current.settings_raw), ...changes };
+    const extended = current.control_raw !== undefined;
+    const extra = extended ? decodeControl(current.saved_control_raw ?? current.control_raw) : {};
+    const keys = [...Object.keys(decodeSettings(current.settings_raw)), ...Object.keys(extra)];
+    if (Object.keys(changes).some(key => !keys.includes(key))) throw new Error('此韌體不支援選取的設定，請先更新');
+    const value = { ...decodeSettings(current.saved_settings_raw ?? current.settings_raw), ...extra, ...changes };
     value.owns_extra_lines ||= value.osd_lines === 4;
-    const raw = encodeSettings(value); await this.request(CMD.SETTINGS, u32(raw)); return this.reboot({ settings_raw: raw });
+    const raw = encodeSettings(value), expected = { settings_raw: raw };
+    let payload = u32(raw);
+    if (extended) { expected.control_raw = encodeControl(value); payload = join(payload, u32(expected.control_raw)); }
+    await this.request(CMD.SETTINGS, payload); return this.reboot(expected);
+  }
+  async setLayout(rows) {
+    const payload = encodeLayout(rows), current = await this.info();
+    if (current.osd_layout_version !== 1) throw new Error('請先更新支援 OSD 編輯的韌體');
+    await this.request(CMD.SET_OSD_LAYOUT, payload);
+    const saved = await this.info();
+    if (JSON.stringify(saved.saved_osd_layout) !== JSON.stringify(rows)) throw new Error('OSD 保存讀回不符');
+    const value = await this.reboot();
+    if (JSON.stringify(value.osd_layout) !== JSON.stringify(rows)) throw new Error('OSD 重啟讀回不符');
+    return value;
   }
   async update(pkg, progress = () => {}, cancelled = () => false) {
     const { metadata, image } = pkg, current = await this.info();

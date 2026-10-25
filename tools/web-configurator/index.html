@@ -12,17 +12,25 @@
     <div class="sidebar-foot"><span class="dot"></span> LOCAL / WEB SERIAL<br><small>ESP32-C3 · ESP32-C6</small></div>
   </aside>
   <main>
-    <header><div><p class="eyebrow">CAMERA CONTROL, CONNECTED.</p><h1>設定你的 RotorREC</h1><p>透過飛控 USB，管理相機、調整設定與更新韌體。</p></div><span id="connection-badge" class="badge">尚未連線</span></header>
+    <header><div><p class="eyebrow">CAMERA CONTROL, CONNECTED.</p><h1>設定你的 RotorREC</h1><p id="connection-description">透過飛控 USB，管理相機、調整設定與更新韌體。</p></div><span id="connection-badge" class="badge">尚未連線</span></header>
     <div id="support" class="notice" role="status">使用桌面 Chrome 或 Edge，從 localhost 或 HTTPS 開啟。</div>
-    <div class="notice warning">操作前請拆除螺旋槳、關閉 Betaflight Configurator，並確認 RotorREC 有供電。完成後請將<strong>飛控重新上電</strong>以恢復遙控與 OSD。</div>
+    <div id="maintenance-notice" class="notice warning">操作前請拆除螺旋槳、關閉 Betaflight Configurator，並確認 RotorREC 有供電。完成後請將<strong>飛控重新上電</strong>以恢復遙控與 OSD。</div>
+    <section id="first-use" class="card"><h2>首次使用與飛前檢查</h2><ol><li>首次安裝：依板型用 ESP USB 安裝完整雙槽韌體，再接 5V、GND 與交叉的 TX／RX。</li>
+      <li>設定飛控：啟用所接 UART 的 MSP 115200，將遙控開關或瞬時按鍵指派至 USER；ARM 模式會讀取飛控解鎖狀態。</li>
+      <li>選擇相機協定並配對，確認影片模式、SD 卡與電量。以實際相機畫面確認開始及停止錄影。</li>
+      <li>離開維護後重新上電飛控，確認 OSD 有新鮮狀態、開關／ARM 起停、延遲取消與斷線恢復。</li></ol>
+      <a href="bf-setup.html" target="_blank" rel="noopener">檢查 Betaflight 與放置 OSD</a><p id="preflight-status" class="hint">尚未連接模組；以上硬體項目需由使用者實際確認。</p>
+    </section>
+    <div class="actions"><button id="export-diagnostics" disabled>匯出診斷 JSON</button></div>
     <section id="connection" class="card">
-      <div class="section-heading"><div><p class="eyebrow">01 / CONNECTION</p><h2>連接飛控</h2></div><span class="label">115200 · 8N1</span></div>
+      <div class="section-heading"><div><p class="eyebrow">01 / CONNECTION</p><h2 id="connection-title">連接飛控</h2></div><span id="transport-label" class="label">115200 · 8N1</span></div>
       <div class="connection-row"><label>RotorREC 所接 UART <input id="uart" type="number" min="1" max="20" step="1" placeholder="留空：單一 MSP UART 自動選取"></label><button id="connect" class="primary">選擇序列埠並連線</button><button id="disconnect" disabled>斷線</button></div>
       <label class="check"><input id="direct" type="checkbox">飛控已在 Passthrough（上次操作後未將飛控重新上電）</label>
-      <p class="hint">UART 須先在 Betaflight 啟用 MSP，速度 115200。首次安裝或舊單槽韌體仍需以 ESP USB 安裝完整雙槽韌體。</p>
+      <p id="connection-hint" class="hint">UART 須先在 Betaflight 啟用 MSP，速度 115200。首次安裝或舊單槽韌體仍需以 ESP USB 安裝完整雙槽韌體。</p>
       <div class="stats"><div><small>板型</small><strong id="board">—</strong></div><div><small>目前韌體</small><strong id="version">—</strong></div><div><small>相機連線</small><strong id="phase">—</strong></div><div><small>相機電量</small><strong id="battery">—</strong></div></div>
       <div class="status-row"><span id="device-status">連線後讀取裝置狀態。</span><button id="refresh" data-device disabled>重新讀取</button></div>
       <p id="pair-code" class="pair-code" hidden></p><p id="pending" class="hint"></p>
+      <p id="camera-telemetry" class="hint">相機遙測尚未讀取。</p><p id="camera-warnings" role="status"></p>
     </section>
     <section id="camera-section" class="card">
       <div class="section-heading"><div><p class="eyebrow">02 / CAMERA & SETTINGS</p><h2>相機與基本設定</h2></div><span class="label">保存後重啟 ESP</span></div>
@@ -33,8 +41,25 @@
         <label>OSD 顯示行數<select id="osd"><option value="2">2 行 · 基本資訊</option><option value="4">4 行 · 擴充資訊</option></select></label>
         <label>LED 亮度 (%)<input id="led" type="number" min="1" max="100" step="1" value="5"></label>
         <label>低電量警告 (%)<input id="low-battery" type="number" min="0" max="100" step="1" value="0"><small>0 = 關閉警告</small></label>
-      </div><label class="check"><input id="link-pause" type="checkbox">Link Pause：暫停相機 BLE 連線與錄影控制，保留配對</label><div class="actions"><button id="save-settings" class="primary">保存設定並重啟</button><span class="hint">4 行模式需要在 Betaflight 放置 Custom Messages 1–4。</span></div></fieldset>
+      </div><fieldset id="record-controls" disabled><legend>錄影方式與警告</legend><div class="settings-grid">
+        <label>錄影方式<select id="record-mode"><option value="0">USER 開關：高錄影、低停止</option><option value="1">ARM：解鎖錄影、上鎖延遲停止</option><option value="2">Button：USER 瞬時按鍵切換錄影</option><option value="3">Combi：ARM 自動＋USER 按鍵</option><option value="4">Off：只監看，不自動控制</option></select></label>
+        <label>上鎖後停錄延遲（秒）<input id="stop-delay" type="number" min="0" max="30" step="1" value="5"><small>只用於 ARM／Combi；再次解鎖取消倒數。</small></label>
+        <label>剩餘錄影時間警告（秒）<input id="low-remaining" type="number" min="0" max="3600" step="1" value="0"><small>0 = 關閉；僅限相機有回報此資訊。</small></label>
+      </div><label class="check"><input id="auto-record" type="checkbox" checked>ARM／Combi：解鎖時自動開始錄影</label>
+      <label class="check"><input id="auto-stop" type="checkbox" checked>ARM／Combi：上鎖後自動停止錄影</label>
+      <label class="check"><input id="heads-up" type="checkbox" checked>顯示相機提醒；錄影失敗等重要錯誤仍會顯示</label>
+      <p class="hint">Button／Combi 請在 Betaflight 將瞬時按鍵指定至所選 USER。Off 仍可使用相機本身或 BOOT 按鈕。停錄要求不等於已存檔，斷電前請確認相機已停止。</p></fieldset>
+      <label class="check"><input id="link-pause" type="checkbox">Link Pause：暫停相機 BLE 連線與錄影控制，保留配對</label><div class="actions"><button id="save-settings" class="primary">保存設定並重啟</button><span class="hint">4 行模式需要在 Betaflight 放置 Custom Messages 1–4。</span></div></fieldset>
     </section>
+    <section class="card"><h2>編輯 OSD 顯示內容</h2><fieldset id="layout-controls" disabled>
+      <p class="hint">可用欄位：{state} 狀態、{battery} 電量、{elapsed} 計時、{remaining} 剩餘時間、{format} 格式、{space} 容量、{mode} 模式。可加英數文字，每行最多顯示 16 格；留空使用內建行。錯誤與停錄倒數固定優先顯示於第一行。</p>
+      <div class="settings-grid"><label>第 1 行<input id="layout-0" maxlength="63" placeholder="{state}"></label><label>第 2 行<input id="layout-1" maxlength="63" placeholder="{battery} {remaining}"></label>
+      <label>第 3 行<input id="layout-2" maxlength="63" placeholder="{format}"></label><label>第 4 行<input id="layout-3" maxlength="63" placeholder="{space}"></label></div>
+      <div class="actions"><button id="save-layout">保存版面並重啟</button><button id="reset-layout">恢復內建版面草稿</button></div><p class="hint">第 3、4 行需選擇四行模式，並在 Betaflight OSD 放置 Custom Messages 3、4。畫面位置由飛控設定。</p>
+    </fieldset></section>
+    <section class="card"><h2>手機 Wi-Fi 地面維護</h2><fieldset id="wifi-controls" disabled><p class="hint">先讀取並保存這台模組的連線資訊，再進入 Wi-Fi。連上模組熱點後，以手機瀏覽器開啟 http://192.168.4.1；若手機顯示無網際網路，選擇保持連線。Wi-Fi 模式停用相機與飛控控制，僅供地面使用。</p>
+      <div class="actions"><button id="wifi-info">顯示 Wi-Fi 連線資訊</button><button id="wifi-enter" disabled>重啟進入 Wi-Fi 維護</button><button id="wifi-exit" hidden>退出 Wi-Fi，恢復運行</button></div>
+      <pre id="wifi-credentials"></pre><p class="hint">已保存密碼後，正常模式也可按住 BOOT 8 秒再放開進入 Wi-Fi。C6 顯示連線資訊，C3 藍燈閃爍；長按 BOOT 放開退出。十分鐘無操作且沒有進行中工作會自動返回正常模式。一般斷電重開也會離開 Wi-Fi。</p></fieldset></section>
     <section id="firmware-section" class="card">
       <div class="section-heading"><div><p class="eyebrow">03 / FIRMWARE</p><h2>更新 RotorREC 韌體</h2></div><span class="label">雙槽 OTA</span></div>
       <label class="file-picker">選取本機更新包 <input id="package" type="file" accept=".zip,application/zip"><span>RotorREC update.zip · 自動檢查板型與 SHA-256</span></label>
@@ -44,6 +69,13 @@
       <p class="hint">只更新 RotorREC，不更新飛控。傳送 100% 後仍須完成校驗及重啟驗證。請保持分頁在前景、避免電腦睡眠，並使用可信任的韌體來源。</p>
     </section>
     <section id="log-section" class="card"><div class="section-heading"><div><p class="eyebrow">04 / ACTIVITY</p><h2>操作紀錄</h2></div><button id="clear-log">清除</button></div><p id="result" role="status" aria-live="polite">準備就緒。</p><pre id="log" aria-label="操作紀錄"></pre></section>
-    <footer>RotorREC Configurator · 本機執行，韌體不會上傳至伺服器。<a href="README.md">操作說明</a></footer>
+    <section class="card"><h2>移除相機與重設</h2><fieldset id="reset-controls" disabled>
+      <label for="reset-scope">重設範圍</label><select id="reset-scope"><option value="1">清除所有相機配對</option><option value="2">恢復出廠設定</option></select>
+      <p class="hint">清除配對會刪除三種協定保存的相機與藍牙配對，保留設定並開啟 Link Pause。恢復出廠另會清除設定、OSD 版面、待停錄工作及 Wi-Fi 密碼。</p>
+      <label><input type="checkbox" id="reset-confirm">我已確認相機停止錄影，並同意刪除所選資料</label>
+      <div class="actions"><button id="reset-device" disabled>執行重設並重啟</button></div>
+      <p class="hint">Wi-Fi 出廠重設後回到正常模式，並清除舊密碼；此連線無法確認完成。請以飛控 USB 重新讀取狀態。C6 可在開機後按住 BOOT 8 秒並放開，再查看新連線資訊。</p>
+    </fieldset></section>
+    <footer>RotorREC Configurator · 本機執行，韌體不會上傳至伺服器。<a id="help-link" href="README.md">操作說明</a></footer>
   </main>
 </body></html>

@@ -1,5 +1,7 @@
 # CAMLINK 功能參考與 BF_Cam 導入評估
 
+最新功能差異請看 [2026-10-22 CAMLINK 對照](camlink-comparison-2026-10-22.md)，包含 Chrome Configurator 現況與 CAMLINK 1.1.0.b2 測試版；本頁保留原始導入評估。
+
 查核日期：2026-10-01。以下保留當時的功能評估與程式狀態；未操作 CAMLINK 實機。2026-10-02 已依使用者指示實作首批功能，現況與驗收請看 [1.2 設定與 Link Pause](camera-settings.md) 及 [驗證紀錄](verification-status.md)。
 
 建議先完成 RotorREC 1.1 硬體回歸，再加入 **四行 OSD、可保存設定、低電量提示與 Link Pause**。Wi-Fi 地面設定頁與可選 ARM／延遲停錄可各自作為下一個里程碑。新品牌、KISS、跨品牌自動辨識及自動修改 OSD 位置暫緩。

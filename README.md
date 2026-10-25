@@ -2,7 +2,7 @@
 
 **ESP32-based action camera control for Betaflight, with recording status and battery feedback on OSD.**
 
-RotorREC connects an action camera to your FPV setup. An ESP32 communicates with the camera over BLE, reads a Betaflight USER mode over UART/MSPv2, controls recording, and sends actual camera status and battery level to the OSD.
+RotorREC connects an action camera to your FPV setup. An ESP32 communicates with the camera over BLE, reads Betaflight ARM and USER modes over UART/MSPv2, controls recording, and sends camera-confirmed status and available telemetry to the OSD.
 
 Current firmware version: **1.2.0-dev (new features pending hardware validation)**. **Earlier Betaflight UART communication and OSD functionality have been tested on real hardware and confirmed working by the project owner.**
 
@@ -10,14 +10,16 @@ Current firmware version: **1.2.0-dev (new features pending hardware validation)
 
 - Chrome/Edge Web Serial configurator and Python passthrough manager: select Action 2 / DJI R SDK / GoPro, pair cameras, and update over the existing UART using dual app slots and rollback. See [passthrough setup](docs/passthrough.md); new functionality is not yet hardware-validated.
 - Saved USER1-USER4 selection, two/four OSD lines, C3 LED brightness and optional low-battery warning. Four-line DJI R SDK telemetry uses individually validated camera fields. See [camera settings](docs/camera-settings.md).
+- Development additions: shared recording failure/unknown feedback, ARM/Button/Combi/Off modes, 0–30 second disarm delay with re-arm cancellation, persisted pending STOP, per-field telemetry warnings and editable OSD templates. Final acceptance is tracked in the [completion plan](docs/recording-completion-plan.md).
+- Ground-only phone Wi-Fi settings/update, pairing removal/factory reset, diagnostics export and a separate explicit Betaflight OSD installation tool. See the [configurator guide](tools/web-configurator/README.md). Wi-Fi mode stops BLE/FC control; it is not an FC arming interlock.
 - Persistent Link Pause retains pairing, disables BLE and clears the owned camera OSD lines. Resume from the manager or by holding BOOT for 1.2 seconds.
 - DJI Action 2 legacy BLE/DUML: pairing, saved camera profiles, automatic reconnection, recording control, actual recording state, and battery level.
 - DJI public R SDK: a separate protocol path for Action 4; connection, recording control, and recording settings were verified in an earlier hardware revision.
 - DJI R SDK reconnect restores the full session; recording requests require a recognized video state and camera confirmation after the ACK. Photo, pre-recording, playback and unknown states block shutter control.
 - GoPro official Open GoPro BLE: runtime-selectable pairing, saved target, reconnection, video start/stop, actual encoding status, battery, and keepalive. Hardware validation is pending; see [GoPro setup](docs/gopro.md).
 - Betaflight USER1-USER4 recording control. USER1 is the default; assign the AUX channel and switch range in Betaflight Modes.
-- OSD Custom Messages 1/2 for camera status/battery by default; optional 3/4 for recording settings/storage. Action 2 and GoPro extra fields remain unavailable.
-- Short-press BOOT to toggle recording; hold for 1.2 seconds to scan and pair again when idle/offline, or resume when Link Pause is active. Fresh pairing is blocked while recording, saving, awaiting a command or connected with unknown state.
+- OSD Custom Messages 1/2 for camera status/battery by default; optional 3/4 for settings/storage. Action 2 elapsed time is explicitly estimated from a confirmed start. GoPro optional time/storage/format queries fall back to basic status when unavailable; unsupported fields remain unknown.
+- Short-press BOOT to toggle recording; hold 1.2–8 seconds and release to pair or resume Link Pause. Hold at least 8 seconds after normal boot and release for Wi-Fi. Known armed/failsafe/stale FC state blocks maintenance entry; recording, saving, pending commands and unresolved recording results also block it. Do not hold BOOT during power-on for this gesture.
 - ESP32-C3-Zero RGB status indicator or ESP32-C6-LCD-1.47 display interface.
 
 ## Support status
@@ -94,9 +96,9 @@ python -m pip install pyserial==3.5
 python tools/rotorrec_manager.py gui
 ```
 
-Connect to the FC USB port, close Betaflight Configurator, and choose **Read status** before editing settings. **Save settings & restart** saves USER1-USER4, two/four OSD lines, C3 LED brightness (1-100%) and the camera low-battery threshold (0=off). Defaults are two OSD lines, 5% LED brightness and warnings off. Configure the matching USER mode and Custom Message elements in Betaflight.
+Connect to the FC USB port, close Betaflight Configurator, and choose **Read status** before editing settings. **Save settings & restart** saves USER1-USER4, two/four OSD lines, C3 LED brightness (1-100%) and the camera low-battery threshold (0=off). Defaults are two OSD lines, 5% LED brightness and disabled low-battery/remaining-time thresholds; important recording/storage warnings remain enabled. Configure the matching USER mode and Custom Message elements in Betaflight.
 
-Four-line mode adds confirmed DJI R SDK recording/remaining time, resolution/FPS and capacity. Unknown or stale fields show `--`; Action 2 and GoPro extra telemetry remains unavailable. After four-line mode has been enabled, switching back to two lines clears Messages 3/4; the module retains ownership of those lines.
+Four-line mode adds available recording/remaining time, resolution/FPS and capacity. DJI R SDK and GoPro fields are individually validated; Action 2 only estimates elapsed time after an observed recording start and marks it `~`. Unknown or stale fields show `--`. After four-line mode has been enabled, switching back to two lines clears Messages 3/4; the module retains ownership of those lines.
 
 **Pause camera link** saves Link Pause and restarts without initializing BLE. Pairing is retained across power cycles. Resume in the manager or hold BOOT for 1.2 seconds. Settings changes are rejected while the connected camera is recording, saving, awaiting a command or has unconfirmed recording status. After maintenance, power-cycle the **FC** to leave passthrough and restore OSD/USER control.
 

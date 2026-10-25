@@ -30,8 +30,12 @@ class ManagerGuiTests(unittest.TestCase):
             if len(calls) == 2:
                 raise RuntimeError("injected transport failure")
             passthrough()
-            log(json.dumps({"camera": 3, "settings_raw": m.encode_settings(dict(user_mode_id=42, osd_lines=4,
-                led_percent=25, low_battery_percent=20, link_paused=False, owns_extra_lines=True))}))
+            value = {"camera": 3, "settings_raw": m.encode_settings(dict(user_mode_id=42, osd_lines=4,
+                led_percent=25, low_battery_percent=20, link_paused=False, owns_extra_lines=True))}
+            if len(calls) >= 3:
+                value.update(control_raw=0x01400328, reset_capable=1, reset_pending=0,
+                    osd_layout_version=1, saved_osd_layout=['{state}', '', '', ''])
+            log(json.dumps(value))
 
         def widgets(parent):
             for child in parent.winfo_children():
@@ -48,7 +52,7 @@ class ManagerGuiTests(unittest.TestCase):
         def exercise():
             all_widgets = list(widgets(root))
             combos = [w for w in all_widgets if isinstance(w, ttk.Combobox)]
-            port, camera, user, osd, led, battery = combos
+            port, camera, user, osd, led, battery = combos[:6]
             uart = next(w for w in all_widgets if isinstance(w, ttk.Entry) and not isinstance(w, ttk.Combobox))
             direct = next(w for w in all_widgets if isinstance(w, ttk.Checkbutton))
             buttons = {w.cget("text"): w for w in all_widgets if isinstance(w, ttk.Button)}
@@ -67,6 +71,8 @@ class ManagerGuiTests(unittest.TestCase):
             pump_until(lambda: str(port.cget("state")) == "normal")
             self.assertEqual([w.get() for w in (user, osd, led, battery)], ["3", "4", "25", "20"])
             self.assertEqual(camera.get(), "gopro")
+            for control in combos[6:]:
+                self.assertEqual(str(control.cget("state")), "disabled") # old firmware cannot accept new controls
             self.assertTrue(root.getvar(direct.cget("variable")))
             for control in (camera, user, osd):
                 self.assertEqual(str(control.cget("state")), "readonly")
@@ -89,6 +95,19 @@ class ManagerGuiTests(unittest.TestCase):
             self.assertEqual(str(camera.cget("state")), "readonly")
             buttons["Save settings & restart"].invoke()
             self.assertEqual(len(calls), 2)
+            buttons["Factory reset"].invoke()
+            self.assertEqual(len(calls), 2) # new port still has no confirmed reset capability
+            buttons["Read status"].invoke()
+            pump_until(lambda: str(port.cget("state")) == "normal")
+            self.assertEqual(len(calls), 3)
+            for control in combos[6:]: self.assertNotEqual(str(control.cget("state")), "disabled")
+            with patch("tkinter.messagebox.askyesno", return_value=False):
+                buttons["Factory reset"].invoke()
+                self.assertEqual(len(calls), 3)
+            with patch("tkinter.messagebox.askyesno", return_value=True):
+                buttons["Remove all camera pairings"].invoke()
+                pump_until(lambda: str(port.cget("state")) == "normal")
+            self.assertEqual((calls[-1].action, calls[-1].scope, calls[-1].confirm), ("reset", "pairings", True))
 
         try:
             with patch("tkinter.Tk", return_value=root), patch.object(root, "mainloop", exercise), \

@@ -99,6 +99,10 @@ static void camera_status_callback(void *data)
         s_snapshot.record_time_valid = video;
         s_snapshot.remain_time_valid = video && status->remain_time != UINT32_MAX;
         s_snapshot.remain_capacity_valid = status->remain_capacity != UINT32_MAX;
+        s_snapshot.mode_valid = strcmp(mode_name(status->camera_mode), "CAMERA") != 0;
+        s_snapshot.video_mode = video;
+        s_snapshot.temperature_valid = status->temp_over <= 3;
+        s_snapshot.temperature = status->temp_over;
         /* Only normal video FPS has the meanings represented by this formatter. */
         s_snapshot.parameters_valid = (status->camera_mode == CAMERA_MODE_NORMAL ||
             status->camera_mode == CAMERA_MODE_SUPERNIGHT) &&

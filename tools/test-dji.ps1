@@ -17,7 +17,7 @@ try {
     $rrCompile = 'call "{0}" >nul && cl /nologo /std:c11 /utf-8 /W4 /WX /I"{1}/tests" /I"{1}/components/dji_camera_sdk/protocol" /I"{1}/components/dji_camera_sdk/logic" "{1}/tests/dji_connect_test.c" /Fe:dji_connect_test.exe && dji_connect_test.exe' -f $rrVars, $rrRoot
     & cmd.exe /d /s /c $rrCompile
     if ($LASTEXITCODE -ne 0) { throw 'DJI handshake tests failed.' }
-    $rrCompile = 'call "{0}" >nul && cl /nologo /std:c11 /experimental:c11atomics /utf-8 /W4 /WX /I"{1}/main" /I"{1}/tests" /I"{1}/components/dji_camera_sdk/logic" "{1}/tests/camera_controller_test.c" /Fe:camera_controller_test.exe && camera_controller_test.exe' -f $rrVars, $rrRoot
+    $rrCompile = 'call "{0}" >nul && cl /nologo /std:c11 /experimental:c11atomics /utf-8 /W4 /WX /I"{1}/main" /I"{1}/tests" /I"{1}/components/dji_camera_sdk/logic" "{1}/tests/camera_controller_test.c" "{1}/main/camera/recording_feedback.c" "{1}/main/camera/camera_telemetry.c" /Fe:camera_controller_test.exe && camera_controller_test.exe' -f $rrVars, $rrRoot
     & cmd.exe /d /s /c $rrCompile
     if ($LASTEXITCODE -ne 0) { throw 'Camera controller tests failed.' }
 } finally { Pop-Location }

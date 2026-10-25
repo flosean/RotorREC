@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>RotorREC · Betaflight OSD 安裝</title><link rel="stylesheet" href="style.css"><script type="module" src="bf-setup-app.mjs"></script></head>
+<body><main style="margin-left:0;max-width:1000px;margin-inline:auto"><h1>Betaflight OSD 安裝檢查</h1>
+<p>先中斷 RotorREC 設定頁的序列埠連線，將飛控重新上電以離開 Passthrough，再使用此頁連接飛控 USB。</p>
+<div class="notice warning">僅供地面設定。拆槳、相機停錄、遙控器保持上鎖；設定期間不要操作解鎖開關。此頁只更動四個 Custom Message 的位置與目前 OSD 設定檔的顯示開關。</div>
+<section class="card"><div class="actions"><button id="read">連接並讀取飛控</button><button id="close" disabled>斷線</button><button id="export" disabled>匯出飛控檢查</button></div><pre id="status" role="status">尚未連線。</pre>
+<p id="modes" class="hint"></p><p class="hint">UART 的 MSP 115200 與 USER 指派請在 Betaflight Configurator 設定；此工具只讀取 Modes，不改動遙控或連接埠。OSD 元件位置可能與其他文字重疊，套用後請在眼鏡實際檢查。</p></section>
+<section class="card"><h2>四行位置提案</h2><p>座標從 0 開始，每行佔 16 格。啟用／停用只作用於目前 OSD 設定檔；既有其他 OSD 設定會保留。</p><fieldset id="placement" disabled><div id="rows"></div><div class="actions"><button id="preset">產生左上角四行提案</button><button id="preview">更新變更預覽</button></div><pre id="proposal"></pre>
+<label class="check"><input id="ground" type="checkbox">已拆槳、相機停錄，確認本次位置變更</label><button id="apply" disabled>套用、保存並讀回</button></fieldset></section>
+<p><a href="index.html">回到 RotorREC 設定頁</a></p></main></body></html>

@@ -40,7 +40,11 @@ extern controller_ble_profile_t s_ble_profile;
 camera_protocol_t management_camera(void);
 const rr_settings_t *management_settings(void);
 bool management_active(void);
+esp_err_t management_stop_save(bool pending, uint8_t remaining);
+esp_err_t management_stop_load(bool *pending, uint8_t *remaining);
+bool management_stop_healthy(void);
 TickType_t xTaskGetTickCount(void);
+int64_t esp_timer_get_time(void);
 void vTaskDelay(TickType_t ticks);
 void vTaskDelete(TaskHandle_t task);
 BaseType_t xTaskCreate(void (*task)(void *), const char *name, unsigned stack,

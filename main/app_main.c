@@ -1,5 +1,6 @@
 #include <assert.h>
 #include "management/management.h"
+#include "management/ground_wifi.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -48,7 +49,15 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_timer_create(&guard_args, &guard));
     ESP_ERROR_CHECK(esp_timer_start_once(guard, 20000000));
     esp_err_t storage_result = management_init();
-    esp_err_t bf_result = betaflight_bridge_start();
+    esp_err_t wifi_result = ground_wifi_init();
+    bool wifi_mode = wifi_result == ESP_OK && ground_wifi_active();
+    esp_err_t bf_result = wifi_mode ? ground_wifi_start() : betaflight_bridge_start();
+    if (wifi_mode && bf_result != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi maintenance failed; restarting into normal mode: %s", esp_err_to_name(bf_result));
+        /* ground_wifi_init already consumed the one-shot entry flag. */
+        esp_restart();
+        return;
+    }
     if (bf_result != ESP_OK) ESP_LOGE(TAG, "UART management failed: %s", esp_err_to_name(bf_result));
     ESP_LOGI(TAG, "RotorREC %s", esp_app_get_description()->version);
     run_self_check();
@@ -61,12 +70,16 @@ void app_main(void)
     if (led_result != ESP_OK) ESP_LOGE(TAG, "Status LED initialization failed: %s", esp_err_to_name(led_result));
 #endif
 
-    if (storage_result != ESP_OK || camera_controller_init() != ESP_OK) {
+    char wifi_ssid[33] = {0}, wifi_password[17] = {0};
+    if (wifi_mode) {
+        (void)ground_wifi_credentials(wifi_ssid, wifi_password);
+        boot_button_start(NULL, ground_wifi_exit_button, ground_wifi_exit_button);
+    } else if (storage_result != ESP_OK || wifi_result != ESP_OK || camera_controller_init() != ESP_OK) {
         ESP_LOGE(TAG, "Camera controller initialization failed");
     } else {
         camera_controller_start();
     }
-    boot_button_start(camera_controller_short_press, management_button_pair);
+    if (!wifi_mode) boot_button_start(camera_controller_short_press, management_button_pair, management_button_wifi);
     bool checked = false;
     unsigned startup_cycles = 0;
 
@@ -74,13 +87,15 @@ void app_main(void)
         camera_controller_state_t state;
         camera_controller_get_state(&state);
 #ifdef CONFIG_BF_CAM_LCD
-        dashboard_refresh(&state);
+        if (wifi_mode) dashboard_wifi(wifi_ssid, wifi_password);
+        else dashboard_refresh(&state);
         display_process();
 #else
         headless_status_refresh(&state);
         indicator_rgb_t pixel = status_indicator_pixel(status_indicator_select(&state),
                                                         (uint32_t)(esp_timer_get_time() / 1000));
         pixel = status_indicator_brightness(pixel, management_settings()->led_percent);
+        if (wifi_mode) pixel = (indicator_rgb_t){0, 0, (esp_timer_get_time() / 500000) % 2 ? 20 : 0};
         status_led_set_rgb(pixel.red, pixel.green, pixel.blue);
 #endif
         vTaskDelay(pdMS_TO_TICKS(50));
@@ -88,7 +103,7 @@ void app_main(void)
             esp_ota_img_states_t image_state;
             if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &image_state) == ESP_OK &&
                 image_state == ESP_OTA_IMG_PENDING_VERIFY) {
-                if (storage_result != ESP_OK || bf_result != ESP_OK || !management_healthy()) {
+                if (storage_result != ESP_OK || wifi_result != ESP_OK || bf_result != ESP_OK || !management_healthy()) {
                     esp_ota_mark_app_invalid_rollback_and_reboot();
                     esp_restart();
                 }

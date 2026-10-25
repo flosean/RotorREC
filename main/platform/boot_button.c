@@ -2,9 +2,13 @@
 
 #include <stdbool.h>
 
+#ifdef RR_HOST_TEST
+#include "boot_button_test_platform.h"
+#else
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#endif
 
 #define BOOT_BUTTON_GPIO GPIO_NUM_9
 #define LONG_PRESS_MS 1200
@@ -12,6 +16,7 @@
 typedef struct {
     boot_button_callback_t short_press;
     boot_button_callback_t long_press;
+    boot_button_callback_t wifi_press;
 } callbacks_t;
 
 static callbacks_t s_callbacks;
@@ -29,24 +34,19 @@ static void button_task(void *argument)
     gpio_config(&config);
 
     bool pressed = false;
-    bool long_handled = false;
     TickType_t pressed_at = 0;
     while (true) {
         bool now_pressed = gpio_get_level(BOOT_BUTTON_GPIO) == 0;
         if (now_pressed && !pressed) {
             pressed = true;
-            long_handled = false;
             pressed_at = xTaskGetTickCount();
-        } else if (now_pressed && pressed && !long_handled &&
-                   pdTICKS_TO_MS(xTaskGetTickCount() - pressed_at) >= LONG_PRESS_MS) {
-            long_handled = true;
-            if (s_callbacks.long_press != NULL) {
-                s_callbacks.long_press();
-            }
         } else if (!now_pressed && pressed) {
-            if (!long_handled && s_callbacks.short_press != NULL) {
-                s_callbacks.short_press();
-            }
+            /* Dispatch on release, so the eight-second Wi-Fi gesture cannot
+             * first trigger pairing. Ignore contact bounce shorter than 60 ms. */
+            uint32_t held = pdTICKS_TO_MS(xTaskGetTickCount() - pressed_at);
+            boot_button_callback_t action = held >= 8000 ? s_callbacks.wifi_press :
+                held >= LONG_PRESS_MS ? s_callbacks.long_press : held >= 60 ? s_callbacks.short_press : NULL;
+            if (action) action();
             pressed = false;
         }
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -54,9 +54,10 @@ static void button_task(void *argument)
 }
 
 void boot_button_start(boot_button_callback_t short_press,
-                       boot_button_callback_t long_press)
+                       boot_button_callback_t long_press, boot_button_callback_t wifi_press)
 {
     s_callbacks.short_press = short_press;
     s_callbacks.long_press = long_press;
+    s_callbacks.wifi_press = wifi_press;
     xTaskCreate(button_task, "boot_button", 3072, NULL, 4, NULL);
 }

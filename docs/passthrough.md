@@ -4,6 +4,8 @@ RotorREC 1.1 includes a local GUI and CLI. Connect the computer to the **flight 
 
 The 1.2 development firmware adds saved USER/OSD/LED/battery settings and Link Pause through the same manager. See [camera settings](camera-settings.md) for commands, restart verification and acceptance. No additional USB migration is needed when the 1.1 dual-slot layout is already installed.
 
+The current development work also adds recording modes/delay, telemetry warnings, OSD templates and reset operations. Phone Wi-Fi maintenance uses the same receiver and update package but does not run the camera or FC tasks; its entry/exit and reset verification limits are documented in the [configurator guide](../tools/web-configurator/README.md). The Python tool remains a wired manager.
+
 **Status: both board builds and automated tests pass. Real FC passthrough, radio/camera switching, GUI interaction and physical power-cut/rollback tests are still pending. Previous UART/OSD hardware results do not validate this new update path.**
 
 ## First installation / migration from 1.0
@@ -63,7 +65,7 @@ If an operation loses its connection, an abandoned session expires in 30 seconds
 
 Saving writes one NVS setting and restarts the ESP. Only the selected adapter initializes BLE. Each adapter has its own saved target; changing brands does not erase other profiles. The first version selects the protocol, not a device from a multi-camera scan list. Keep other cameras out of pairing mode and confirm pairing on the camera if requested. GoPro must be in Video mode.
 
-Management pauses automatic USER recording commands and button actions. It does not send STOP on connection or disconnection. Camera changes, reboot and update are rejected while recording, saving or a camera command is pending. A camera can still be operated physically; keep it idle during maintenance. Disconnected/offline cameras do not prevent firmware recovery.
+Management pauses automatic recording commands and button actions. It does not send STOP on connection or disconnection. Camera changes, reboot and update are rejected while recording, saving or a camera command is pending. Unresolved recording-unknown/stop-failed feedback also blocks these operations after disconnection. A camera can still be operated physically; keep it idle during maintenance. Known armed/failsafe or stale FC state rejects a new management session without suspending flight operation.
 
 CLI equivalents (global options precede the command):
 
@@ -99,6 +101,8 @@ At 115200 8N1, 1 MiB takes at least about 91 seconds before protocol/Flash overh
 Wire layout, little endian: `RREC` magic (4), version `1` (1), command (1), nonzero session (4), sequence (4), payload length (2), payload (0–1040), CRC32 (4) over header and payload. Responses set command bit 7 and start their payload with a 32-bit ESP error code; INFO/HELLO append JSON. HELLO starts at sequence 0. Subsequent requests increment by one; one request is in flight. Different active sessions and stale/reordered requests are ignored. A partial frame expires after 300ms between bytes; the session expires after 30 seconds without an accepted request.
 
 BEGIN is `<size:u32, layout:u32, board:char[32], version:char[32], sha256:byte[32]>`; DATA is `<offset:u32, bytes>`, maximum 1024 data bytes. Strings are NUL-padded. Camera IDs are 1=R SDK, 2=Action 2, 3=GoPro. The first DATA chunk must contain the full image/app descriptor (at least 288 bytes). Bootloader and partition-table changes require USB installation and a new layout version.
+
+Development extensions: command 12 returns bounded telemetry JSON with null for unavailable values; 13 reads current/saved OSD templates (257 bytes each); 14 saves one template block; 15 reads Wi-Fi credentials; 16 enters Wi-Fi on restart; 17 exits Wi-Fi; 18 schedules a reset (one-byte scope: 1 all pairings, 2 factory). RESET persists a job before replying; INFO reports `reset_pending`. The job is applied before loading settings/starting BLE on the next boot, and is cleared only after all storage commits succeed. RESET itself does not reboot; clients read the pending job then issue REBOOT and verify completion. Factory reset over Wi-Fi removes the credentials, so that connection cannot verify the resulting boot.
 
 ```powershell
 .\tools\test-management.ps1

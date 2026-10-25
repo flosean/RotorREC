@@ -1,10 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateRawSync } from 'node:zlib';
-import { Client, CMD, Parser, TimeoutError, crc32, decodeSettings, encode, encodeSettings, enterPassthrough, imageMetadata, loadPackage, selectUart, u32 } from '../tools/web-configurator/protocol.mjs';
+import { Client, CMD, Parser, TimeoutError, crc32, decodeSettings, decodeControl, encodeControl, encodeLayout, decodeLayout, encode, encodeSettings, enterPassthrough, imageMetadata, loadPackage, selectUart, u32 } from '../tools/web-configurator/protocol.mjs';
 import { SerialTransport } from '../tools/web-configurator/serial.mjs';
+import { HttpTransport } from '../tools/web-configurator/http.mjs';
+import { sha256Fallback, sha256 } from '../tools/web-configurator/sha256.mjs';
+import { createHash, randomBytes } from 'node:crypto';
 
 const text = new TextEncoder();
+test('reset verifies durable intent and restart; Wi-Fi factory reset stays unverified', async () => {
+  const client = new Client({}); let pending = 0, wifi = 0, rebooted = false;
+  client.info = async () => ({reset_capable: 1, reset_pending: pending, wifi_active: wifi});
+  client.request = async (cmd, payload) => {
+    if (cmd === CMD.RESET) pending = payload[0];
+    else { assert.equal(cmd, CMD.REBOOT); rebooted = true; }
+  };
+  client.reboot = async expected => ({...expected, settings_raw: 0x01000058});
+  assert.equal((await client.resetDevice(1)).reset_pending, 0);
+  await assert.rejects(client.resetDevice(0), /無效/);
+  wifi = 1; assert.equal(await client.resetDevice(2), null); assert.equal(rebooted, true);
+  client.info = async () => ({reset_capable: 0});
+  await assert.rejects(client.resetDevice(1), /更新韌體/);
+  client.info = async () => ({reset_capable: 1, reset_pending: 0});
+  await assert.rejects(client.resetDevice(1), /未保存/);
+});
 const join = (...parts) => new Uint8Array(Buffer.concat(parts));
 const dataView = b => new DataView(b.buffer, b.byteOffset, b.length);
 function image() {
@@ -42,6 +61,39 @@ test('settings roundtrip, old ownership retained, corrupt values rejected', () =
   }
   for (const raw of [0, -1, 2 ** 32, 0x01000000, 0x01000054, 0x01080050, true]) assert.throws(() => decodeSettings(raw));
 });
+
+test('OSD templates validate known tokens and require saved plus reboot readback', async () => {
+  const rows = ['{state}', '{battery} {remaining}', 'TEST {format}', ''];
+  assert.deepEqual(decodeLayout(encodeLayout(rows)), rows);
+  for (const row of ['{typo}', '{state', '}', '中文字', 'X'.repeat(64), '{mode}'.repeat(9)])
+    assert.throws(() => encodeLayout([row, '', '', '']));
+  const client = new Client({}); let saved;
+  client.info = async () => ({osd_layout_version: 1, saved_osd_layout: saved});
+  client.request = async (command, payload) => { assert.equal(command, CMD.SET_OSD_LAYOUT); saved = decodeLayout(payload); };
+  client.reboot = async () => ({osd_layout: saved});
+  assert.deepEqual((await client.setLayout(rows)).osd_layout, rows);
+  client.reboot = async () => ({osd_layout: ['', '', '', '']});
+  await assert.rejects(client.setLayout(rows), /重啟讀回不符/);
+});
+test('record settings migrate, preserve legacy fields and verify both words after restart', async () => {
+  const control = { record_mode: 0, stop_delay_seconds: 5, auto_record: true, auto_stop: true,
+    low_remaining_seconds: 0, heads_up_warnings: true };
+  assert.equal(encodeControl(control), 0x01400328);
+  assert.deepEqual(decodeControl(0x01400328), control);
+  for (const raw of [0, -1, true, 0x02000000, 0x01800000, 0x010000f8, 0x01000007]) assert.throws(() => decodeControl(raw));
+  const client = new Client({}), writes = [];
+  client.info = async () => ({ settings_raw: 0x01000050, control_raw: encodeControl(control) });
+  client.request = async (cmd, payload) => writes.push({ cmd, payload });
+  client.reboot = async expected => expected;
+  const result = await client.setSettings({ record_mode: 3, stop_delay_seconds: 30, auto_stop: false });
+  assert.equal(writes[0].cmd, CMD.SETTINGS); assert.equal(writes[0].payload.length, 8);
+  assert.equal(dataView(writes[0].payload).getUint32(4, true), result.control_raw);
+  assert.deepEqual(decodeControl(result.control_raw), { ...control, record_mode: 3, stop_delay_seconds: 30, auto_stop: false });
+  client.info = async () => ({ settings_raw: 0x01000050 });
+  await assert.rejects(client.setSettings({ record_mode: 1 }), /不支援/);
+  assert.equal(writes.length, 1);
+});
+
 test('UART selection never probes other peripherals or guesses among MSP candidates', () => {
   const ports = 'serial 20 1 115200 0 0 0\r\nserial 0 64 115200 0 0 0\r\nserial 2 1 115200 0 0 0\r\n';
   assert.equal(selectUart(ports), 3); assert.equal(selectUart(ports, '3'), 3); assert.throws(() => selectUart(ports, '1'));
@@ -92,6 +144,20 @@ class Peripheral {
   }
   async read() { return this.queue.shift() ?? new Uint8Array(); }
 }
+
+test('telemetry uses its own bounded reply and older firmware needs no extra request', async () => {
+  const client = new Client({}), calls = [];
+  client.request = async command => {
+    calls.push(command);
+    return text.encode(JSON.stringify(command === CMD.TELEMETRY ? { record_time: 70000, remain_time: null, warnings: 3 } :
+      { product: 'RotorREC', protocol: 1, board: 'rotorrec_esp32c3', telemetry_version: 1 }));
+  };
+  const value = await client.info(true);
+  assert.deepEqual(calls, [CMD.HELLO, CMD.TELEMETRY]);
+  assert.equal(value.telemetry.record_time, 70000); assert.equal(value.telemetry.remain_time, null);
+  const old = new Client(new Peripheral());
+  assert.equal((await old.info()).telemetry, undefined);
+});
 function fastClient(port) {
   const client = new Client(port), request = client.request.bind(client);
   client.request = (cmd, payload, timeout, retries) => request(cmd, payload, 3, retries ?? 3); return client;
@@ -102,6 +168,47 @@ test('real update flow retransmits exact lost-ACK chunk, writes once, verifies b
   assert.deepEqual(port.received, app); assert.equal(status.elf_sha256, metadata.elf_sha256); assert.ok(progress.includes('verify'));
   const packets = port.requests.map(w => new Parser().feed(w)[0]); const chunks = packets.filter(p => p.command === CMD.DATA);
   assert.equal(chunks.length, 3); assert.equal(chunks[0].sequence, chunks[1].sequence); assert.equal(port.aborted, undefined);
+});
+test('local HTTP SHA-256 fallback matches independent native hashes at padding and image boundaries', async () => {
+  for (const length of [0, 1, 55, 56, 63, 64, 65, 127, 128, 1536, 0x410000]) {
+    const bytes = randomBytes(length), expected = createHash('sha256').update(bytes).digest('hex');
+    assert.equal(Buffer.from(sha256Fallback(bytes)).toString('hex'), expected);
+  }
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  try {
+    Object.defineProperty(globalThis, 'crypto', {value: {}, configurable: true});
+    assert.equal(Buffer.from(await sha256(text.encode('abc'))).toString('hex'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  } finally { Object.defineProperty(globalThis, 'crypto', original); }
+  assert.throws(() => sha256Fallback(new Uint8Array(0x410001)));
+});
+test('HTTP update recovers lost response, renews reboot token and verifies fingerprint; cancel aborts', async () => {
+  for (const cancel of [false, true]) {
+    const peripheral = new Peripheral(); let token = 'a'.repeat(32), sessions = 0, denied = 0;
+    const transport = new HttpTransport(async (url, options) => {
+      if (url === '/session') { sessions++; return Response.json({token}); }
+      assert.equal(url, '/api');
+      if (options.headers['X-RotorREC'] !== token) { denied++; return new Response('', {status: 403}); }
+      const packet = new Parser().feed(options.body)[0];
+      await peripheral.write(options.body);
+      const response = peripheral.queue.shift();
+      if (packet.command === CMD.REBOOT) token = 'b'.repeat(32);
+      if (!response) throw new TypeError('lost HTTP response after device applied command');
+      return new Response(response);
+    });
+    await transport.open(); const client = fastClient(transport), app = image();
+    const pkg = {image: app, metadata: await imageMetadata(app)}; let requestedCancel = false;
+    if (cancel) {
+      await assert.rejects(client.update(pkg, () => { requestedCancel = true; }, () => requestedCancel), /取消/);
+      assert.equal(peripheral.aborted, true); assert.equal(peripheral.committed, false);
+    } else {
+      const value = await client.update(pkg);
+      assert.deepEqual(peripheral.received, app); assert.equal(value.elf_sha256, pkg.metadata.elf_sha256);
+      assert.ok(sessions >= 3 && denied === 1);
+      const chunks = peripheral.requests.filter(w => new Parser().feed(w)[0].command === CMD.DATA);
+      assert.deepEqual(chunks[0], chunks[1]);
+    }
+    await transport.close(); await assert.rejects(transport.write(u32(0)), /關閉/);
+  }
 });
 test('cancel aborts before commit; wrong board does not BEGIN', async () => {
   const app = image(), metadata = await imageMetadata(app), port = new Peripheral(), client = fastClient(port); let cancel = false;

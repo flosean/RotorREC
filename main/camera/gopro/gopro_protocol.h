@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "../camera_types.h"
 
 /* Official EnumPresetGroup, not the similarly named icon IDs (0/1/2). */
 #define GOPRO_PRESET_GROUP_VIDEO 1000U
@@ -14,6 +15,7 @@ enum {
     GOPRO_CMD_IDENTIFY = 0x50,
     GOPRO_CMD_API_VERSION = 0x51,
     GOPRO_QUERY_STATUS = 0x13,
+    GOPRO_QUERY_SETTINGS = 0x12,
     GOPRO_SETTING_KEEPALIVE = 0x5b,
     GOPRO_STATUS_BUSY = 8,
     GOPRO_STATUS_ENCODING = 10,
@@ -25,7 +27,7 @@ bool gopro_api_version_supported(const uint8_t *data, size_t length);
 
 /* Open GoPro BLE packetization. Each response characteristic needs its own RX. */
 typedef struct {
-    uint8_t data[512];
+    uint8_t data[2048];
     size_t expected;
     size_t used;
     uint8_t sequence;
@@ -40,8 +42,10 @@ typedef struct {
     bool ready;
     uint8_t battery;
     uint32_t preset_group;
+    camera_snapshot_t telemetry;
 } gopro_status_t;
 
 /* Accept a complete successful 0x13 reply with every required status present. */
 bool gopro_parse_status(const uint8_t *data, size_t length, gopro_status_t *status);
+bool gopro_parse_format(const uint8_t *data, size_t length, char parameters[21]);
 bool gopro_advertisement(const uint8_t *data, size_t length);
